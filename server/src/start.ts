@@ -2,9 +2,11 @@ import { getEngine } from './db/init.js';
 import { initialize } from './db.js';
 import { createApp } from './index.js';
 import { startBackupScheduler, stopBackupScheduler } from './lib/backup.js';
+import { startCaptureWorker } from './lib/captures/worker.js';
 import { config } from './lib/config.js';
 import { seedDemoData } from './lib/demoSeed.js';
 import { loadEmailTemplates } from './lib/emailTemplateLoader.js';
+import { initializeLocalMode } from './lib/localMode.js';
 import { pushLog } from './lib/logBuffer.js';
 import { createLogger } from './lib/logger.js';
 import { cleanupOrphanPhotos } from './lib/photoCleanup.js';
@@ -16,6 +18,7 @@ const log = createLogger('startup');
 
 // Initialize the database engine before anything touches the DB
 await initialize();
+await initializeLocalMode();
 loadEmailTemplates();
 
 let eeModule: typeof import('./ee/index.js') | null = null;
@@ -58,6 +61,7 @@ if (config.demoMode) {
 
 // Track timer handles for cleanup during shutdown
 const timers: { timeouts: NodeJS.Timeout[]; intervals: NodeJS.Timeout[] } = { timeouts: [], intervals: [] };
+const captureWorker = startCaptureWorker();
 
 const server = app.listen(config.port, () => {
   log.info(`API server listening on port ${config.port}`);
@@ -91,7 +95,9 @@ const server = app.listen(config.port, () => {
 
 const shutdown = () => {
   log.info('Shutting down gracefully...');
-  server.close(() => {
+  // Abort inference immediately, then wait for its durable retry state before DB close.
+  const stoppedCaptureWorker = captureWorker.stop();
+  server.close(async () => {
     // Stop all scheduled jobs
     stopBackupScheduler();
     stopUserCleanupJob();
@@ -100,9 +106,9 @@ const shutdown = () => {
     for (const id of timers.intervals) clearInterval(id);
 
     // Drain thumbnail worker pool, then close the database connection
-    closeThumbnailPool()
-      .catch(() => {})
-      .finally(() => getEngine().close().catch(() => {}));
+    await stoppedCaptureWorker.catch(() => {});
+    await closeThumbnailPool().catch(() => {});
+    await getEngine().close().catch(() => {});
 
     log.info('Shutdown complete');
     process.exit(0);

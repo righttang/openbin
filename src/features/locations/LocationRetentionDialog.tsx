@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { OptionGroup } from '@/components/ui/option-group';
 import { useToast } from '@/components/ui/toast';
+import { useAuthStatusConfig } from '@/lib/qrConfig';
 import { useTerminology } from '@/lib/terminology';
 import { getErrorMessage } from '@/lib/utils';
 import type { Location } from '@/types';
@@ -30,6 +31,7 @@ interface LocationRetentionDialogProps {
 
 export function LocationRetentionDialog({ location, open, onOpenChange }: LocationRetentionDialogProps) {
   const { showToast } = useToast();
+  const { config: { localMode } } = useAuthStatusConfig();
   const t = useTerminology();
   const [activityRetention, setActivityRetention] = useState(90);
   const [trashRetention, setTrashRetention] = useState(30);
@@ -52,7 +54,7 @@ export function LocationRetentionDialog({ location, open, onOpenChange }: Locati
       await updateLocation(location.id, {
         activity_retention_days: activityRetention,
         trash_retention_days: trashRetention,
-        default_join_role: defaultJoinRole,
+        ...(!localMode ? { default_join_role: defaultJoinRole } : {}),
       });
       onOpenChange(false);
       showToast({ message: 'Retention settings saved', variant: 'success' });
@@ -69,7 +71,7 @@ export function LocationRetentionDialog({ location, open, onOpenChange }: Locati
         <DialogHeader>
           <DialogTitle>{t.Location} Settings</DialogTitle>
           <DialogDescription>
-            Configure data retention and membership defaults for this {t.location}.
+            {localMode ? `Configure data retention for this ${t.location}.` : `Configure data retention and membership defaults for this ${t.location}.`}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
@@ -101,7 +103,7 @@ export function LocationRetentionDialog({ location, open, onOpenChange }: Locati
             />
             <p className="text-[11px] text-[var(--text-tertiary)]">7–365 days. Deleted {t.bins} are permanently purged after this period.</p>
           </div>
-          <div className="space-y-1.5">
+          {!localMode && <div className="space-y-1.5">
             <Label>Default role for new members</Label>
             <OptionGroup
               options={joinRoleOptions}
@@ -113,7 +115,7 @@ export function LocationRetentionDialog({ location, open, onOpenChange }: Locati
                 ? 'New members will be read-only until promoted.'
                 : 'New members can create and edit content.'}
             </p>
-          </div>
+          </div>}
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>

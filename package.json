@@ -5,12 +5,15 @@
   "version": "0.2.2",
   "type": "module",
   "scripts": {
+    "setup:local": "node scripts/setup-local.mjs",
+    "verify:vision": "node --env-file=.env scripts/verify-vision.mjs",
     "dev": "vite",
     "dev:cloud": "BUILD_EDITION=cloud vite",
     "dev:server": "cd server && npm run dev",
     "dev:all": "npx concurrently -n api,web -c blue,green \"npm run dev:server\" \"npm run dev\"",
+    "dev:lan": "npx concurrently -k -n api,web -c blue,green \"npm run dev:server\" \"npm run dev -- --host 0.0.0.0 --port 5173 --strictPort\"",
     "dev:cloud:all": "npx concurrently -n api,web -c blue,green \"npm run dev:server\" \"npm run dev:cloud\"",
-    "build": "tsc && cp server/openapi.yaml public/api-docs/openapi.yaml && vite build",
+    "build": "tsc && node scripts/sync-api-docs.mjs && vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -19,6 +22,7 @@
     "prepare": "husky"
   },
   "dependencies": {
+    "@noble/hashes": "2.4.0",
     "clsx": "^2.1.1",
     "html5-qrcode": "^2.3.8",
     "jspdf": "^4.2.0",

@@ -4,11 +4,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAuth } from '@/lib/auth';
 import { AuthGuard } from '../AuthGuard';
 
+const status = vi.hoisted(() => ({ localMode: false }));
 vi.mock('@/lib/auth', () => ({ useAuth: vi.fn() }));
 vi.mock('@/lib/qrConfig', () => ({
   isSelfHostedInstance: () => true,
   useAuthStatusConfig: () => ({
     config: {
+      localMode: status.localMode,
       registrationMode: 'open',
       registrationEnabled: true,
       oauthProviders: [],
@@ -44,6 +46,7 @@ function renderWithRouter() {
 describe('AuthGuard', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    status.localMode = false;
   });
 
   it('renders spinner while loading', () => {
@@ -76,5 +79,22 @@ describe('AuthGuard', () => {
     } as ReturnType<typeof useAuth>);
     renderWithRouter();
     expect(document.querySelector('.animate-spin')).toBeNull();
+  });
+
+  it('offers a connection retry instead of login when local startup fails', () => {
+    status.localMode = true;
+    mockedUseAuth.mockReturnValue({ user: null, loading: false } as ReturnType<typeof useAuth>);
+    renderWithRouter();
+    expect(screen.getByRole('button', { name: '重新连接' })).toBeTruthy();
+    expect(screen.queryByTestId('login-page')).toBeNull();
+    expect(screen.queryByTestId('child-content')).toBeNull();
+  });
+
+  it('opens the workspace for the automatically supplied local identity', () => {
+    status.localMode = true;
+    mockedUseAuth.mockReturnValue({ user: { id: 'local-user' }, loading: false } as ReturnType<typeof useAuth>);
+    renderWithRouter();
+    expect(screen.getByTestId('child-content')).toBeTruthy();
+    expect(screen.queryByTestId('login-page')).toBeNull();
   });
 });

@@ -84,6 +84,9 @@ export const config = Object.freeze({
   corsOriginExplicit: !!process.env.CORS_ORIGIN,
 
   // Auth
+  // Explicitly enabled for the shared, self-hosted RemindMe household.
+  localMode: parseBool(process.env.SELF_HOSTED, true) && parseBool(process.env.REMINDME_LOCAL_MODE, false),
+  localUserId: process.env.REMINDME_LOCAL_USER_ID || null,
   adminPassword: resolveAdminPassword(),
   adminEmail: resolveAdminEmail(),
   adminPasswordReset: parseBool(process.env.ADMIN_PASSWORD_RESET, false),
@@ -91,7 +94,8 @@ export const config = Object.freeze({
   jwtSecret: resolveJwtSecret(),
   accessTokenExpiresIn: '15m',
   refreshTokenMaxDays: 7,
-  cookieSecure: process.env.NODE_ENV === 'production' || parseBool(process.env.TRUST_PROXY, false),
+  cookieSecure: parseBool(process.env.COOKIE_SECURE,
+    process.env.NODE_ENV === 'production' || parseBool(process.env.TRUST_PROXY, false)),
   bcryptRounds: 12,
   registrationMode: (() => {
     const mode = process.env.REGISTRATION_MODE;

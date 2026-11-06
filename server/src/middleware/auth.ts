@@ -3,6 +3,7 @@ import type { NextFunction, Request, Response } from 'express';
 import * as jose from 'jose';
 import { d, query } from '../db.js';
 import { config } from '../lib/config.js';
+import { getLocalUser } from '../lib/localMode.js';
 import { Plan } from '../lib/planGate.js';
 
 const JWT_SECRET_KEY = new TextEncoder().encode(config.jwtSecret);
@@ -17,7 +18,7 @@ declare global {
   namespace Express {
     interface Request {
       user?: AuthUser;
-      authMethod?: 'jwt' | 'api_key';
+      authMethod?: 'jwt' | 'api_key' | 'local';
       apiKeyId?: string;
     }
   }
@@ -48,6 +49,14 @@ async function verifyJwt(token: string): Promise<(AuthUser & { tokenVersion: num
 
 /** Best-effort JWT auth — sets req.user if a valid JWT is present, never rejects. */
 export function tryAuthenticate(req: Request, _res: Response, next: NextFunction): void {
+  if (config.localMode) {
+    getLocalUser().then((user) => {
+      req.user = user;
+      req.authMethod = 'local';
+      next();
+    }).catch(next);
+    return;
+  }
   if (!req.user) {
     const token = extractToken(req);
     if (token && !token.startsWith('sk_openbin_')) {
@@ -136,6 +145,10 @@ function handleUserStatus(
 }
 
 export function authenticate(req: Request, res: Response, next: NextFunction): void {
+  if (config.localMode) {
+    tryAuthenticate(req, res, next);
+    return;
+  }
   if (req.user) {
     const userId = req.user.id;
     const userTv = req.user.tokenVersion ?? 0;

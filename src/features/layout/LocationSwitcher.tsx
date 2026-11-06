@@ -1,6 +1,7 @@
 import { Check, ChevronDown, MapPin } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { Badge } from '@/components/ui/badge';
+import { useAuthStatusConfig } from '@/lib/qrConfig';
 import { useClickOutside } from '@/lib/useClickOutside';
 import { usePopover } from '@/lib/usePopover';
 import { cn } from '@/lib/utils';
@@ -13,6 +14,7 @@ interface LocationSwitcherProps {
 }
 
 export function LocationSwitcher({ locations, activeLocationId, onLocationChange }: LocationSwitcherProps) {
+  const { config: { localMode } } = useAuthStatusConfig();
   const { visible, animating, isOpen, close, toggle } = usePopover();
   const ref = useRef<HTMLDivElement>(null);
 
@@ -88,7 +90,7 @@ export function LocationSwitcher({ locations, activeLocationId, onLocationChange
               >
                 <Check className={cn('h-4 w-4 shrink-0', isActive ? 'text-[var(--accent)]' : 'invisible')} />
                 <span className="flex-1 truncate">{loc.name}</span>
-                {loc.role && (
+                {!localMode && loc.role && (
                   <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
                     {loc.role}
                   </Badge>

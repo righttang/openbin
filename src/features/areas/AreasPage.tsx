@@ -23,6 +23,7 @@ import { LocationRetentionDialog } from '@/features/locations/LocationRetentionD
 import { leaveLocation, useLocationList } from '@/features/locations/useLocations';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { useAuthStatusConfig } from '@/lib/qrConfig';
 import { useTerminology } from '@/lib/terminology';
 import { usePermissions } from '@/lib/usePermissions';
 import { usePlan } from '@/lib/usePlan';
@@ -41,6 +42,7 @@ export function AreasPage() {
   const t = useTerminology();
   const navigate = useNavigate();
   const { user, activeLocationId, setActiveLocationId } = useAuth();
+  const { config: { localMode } } = useAuthStatusConfig();
   const { locations, isLoading: locationsLoading } = useLocationList();
   const { showToast } = useToast();
   const { areas, areaTree, unassignedCount } = useAreaList(activeLocationId);
@@ -121,7 +123,7 @@ export function AreasPage() {
         title={locations.length === 1 ? activeLocation?.name ?? t.Locations : t.Locations}
         actions={locations.length > 0 ? (
           <div className="flex gap-2">
-            <Button
+            {!localMode && <Button
               variant="secondary"
               size="sm"
               onClick={() => setJoinLocationOpen(true)}
@@ -129,7 +131,7 @@ export function AreasPage() {
             >
               <LogIn className="h-4 w-4 mr-1.5" />
               Join
-            </Button>
+            </Button>}
             <Button
               onClick={() => setCreateLocationOpen(true)}
               size="icon"
@@ -180,14 +182,14 @@ export function AreasPage() {
           <EmptyState
             icon={MapPin}
             title="No locations yet"
-            subtitle="Create a location or join one with an invite code"
+            subtitle={localMode ? 'Create a location to organize your bins' : 'Create a location or join one with an invite code'}
             variant="onboard"
           >
             <div className="flex gap-2.5">
-              <Button onClick={() => setJoinLocationOpen(true)} variant="outline">
+              {!localMode && <Button onClick={() => setJoinLocationOpen(true)} variant="outline">
                 <LogIn className="h-4 w-4 mr-2" />
                 Join Location
-              </Button>
+              </Button>}
               <Button onClick={() => setCreateLocationOpen(true)}>
                 <Plus className="h-4 w-4 mr-2" />
                 Create Location
@@ -213,7 +215,7 @@ export function AreasPage() {
               {/* Top row: role + stats + settings */}
               <div className="row-spread gap-3">
                 <div className="flex items-center gap-3 flex-wrap min-w-0">
-                  <span
+                  {!localMode && <><span
                     role="img"
                     aria-label={`Your role: ${isAdmin ? 'Admin' : isViewer ? 'Viewer' : 'Member'}`}
                     className={cn('inline-flex items-center gap-1.5 text-[12px] font-medium px-2 py-1 rounded-[var(--radius-full)] shrink-0', isAdmin ? 'bg-[var(--accent)]/10 text-[var(--accent)]' : 'bg-[var(--bg-input)] text-[var(--text-secondary)]')}
@@ -243,10 +245,10 @@ export function AreasPage() {
                       {memberCount}
                       {viewerCount > 0 && <>+{viewerCount}</>}
                     </span>
-                  </button>
+                  </button></>}
                   {(activeLocation.bin_count != null || activeLocation.area_count != null) && (
                     <>
-                      <span className="text-[var(--text-tertiary)] opacity-30 shrink-0">&middot;</span>
+                      {!localMode && <span className="text-[var(--text-tertiary)] opacity-30 shrink-0">&middot;</span>}
                       <span className="inline-flex items-center gap-1.5 text-[13px] text-[var(--text-tertiary)] shrink-0">
                         <Box className="h-3.5 w-3.5" />
                         <span>{activeLocation.bin_count ?? 0} {(activeLocation.bin_count ?? 0) !== 1 ? t.bins : t.bin}</span>
@@ -270,7 +272,7 @@ export function AreasPage() {
                 />
               </div>
               {/* Invite share (admin only) */}
-              <LocationInviteShare location={activeLocation} variant="card" />
+              {!localMode && <LocationInviteShare location={activeLocation} variant="card" />}
             </div>
 
             {/* Area grid */}
@@ -334,7 +336,7 @@ export function AreasPage() {
 
       {/* Location Dialogs */}
       <LocationCreateDialog open={createLocationOpen} onOpenChange={setCreateLocationOpen} />
-      <LocationJoinDialog open={joinLocationOpen} onOpenChange={setJoinLocationOpen} />
+      {!localMode && <LocationJoinDialog open={joinLocationOpen} onOpenChange={setJoinLocationOpen} />}
       <LocationRenameDialog
         locationId={renameLocationId}
         currentName={locations.find((l) => l.id === renameLocationId)?.name ?? ''}
@@ -349,11 +351,11 @@ export function AreasPage() {
         open={!!deleteLocationId}
         onOpenChange={(open) => !open && setDeleteLocationId(null)}
       />
-      <LocationMembersDialog
+      {!localMode && <LocationMembersDialog
         locationId={membersLocationId ?? lastMembersLocationId.current ?? ''}
         open={!!membersLocationId}
         onOpenChange={(open) => !open && setMembersLocationId(null)}
-      />
+      />}
       <LocationRetentionDialog
         location={locations.find((l) => l.id === retentionLocationId)}
         open={!!retentionLocationId}

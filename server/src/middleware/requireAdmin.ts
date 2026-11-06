@@ -1,12 +1,13 @@
 import type { NextFunction, Request, Response } from 'express';
 import { query } from '../db.js';
+import { config } from '../lib/config.js';
 import { ForbiddenError } from '../lib/httpErrors.js';
 
 /**
  * Express middleware that requires the authenticated user to be a global admin.
  */
 export function requireAdmin(req: Request, _res: Response, next: NextFunction) {
-  if (!req.user) {
+  if (config.localMode || !req.user) {
     next(new ForbiddenError('Admin access required'));
     return;
   }

@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import type { NextFunction, Request, Response } from 'express';
+import { config } from './config.js';
 import { CSRF_COOKIE, setCsrfCookie } from './cookies.js';
 
 const CSRF_HEADER = 'x-csrf-token';
@@ -55,18 +56,18 @@ const CSRF_EXEMPT_PREFIXES = ['/api/auth/oauth/'];
  */
 export function csrfProtect(req: Request, res: Response, next: NextFunction): void {
   if (SAFE_METHODS.has(req.method)) {
-    if (hasAuthCookie(req) && !readCookie(req)) setCsrfCookie(res);
+    if ((config.localMode || hasAuthCookie(req)) && !readCookie(req)) setCsrfCookie(res);
     next();
     return;
   }
 
-  if (isApiKeyAuth(req) || !hasAuthCookie(req)) {
+  if (!config.localMode && (isApiKeyAuth(req) || !hasAuthCookie(req))) {
     next();
     return;
   }
 
   const path = req.path;
-  if (CSRF_EXEMPT_PREFIXES.some((p) => path.startsWith(p))) {
+  if (!config.localMode && CSRF_EXEMPT_PREFIXES.some((p) => path.startsWith(p))) {
     next();
     return;
   }

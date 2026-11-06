@@ -7,7 +7,7 @@ export interface ActionContext {
   userId: string;
   userName: string;
   pendingActivities: PendingActivity[];
-  authMethod?: 'jwt' | 'api_key';
+  authMethod?: 'jwt' | 'api_key' | 'local';
   apiKeyId?: string;
 }
 
@@ -28,7 +28,7 @@ export interface PendingActivity {
   entityId?: string;
   entityName?: string;
   changes?: Record<string, { old: unknown; new: unknown }>;
-  authMethod?: 'jwt' | 'api_key';
+  authMethod?: 'jwt' | 'api_key' | 'local';
   apiKeyId?: string;
 }
 

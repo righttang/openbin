@@ -29,6 +29,11 @@ describe('SETTINGS_CATEGORIES', () => {
 });
 
 describe('filterCategories', () => {
+  it('hides account and user-management categories in local mode even for an admin', () => {
+    const result = filterCategories({ localMode: true, isAdmin: true, isEE: true, isSiteAdmin: true });
+    expect(result.map((c) => c.id)).toEqual(['preferences', 'personalization', 'ai', 'data', 'about']);
+  });
+
   it('shows only ungated categories for non-admin users', () => {
     const result = filterCategories({
       isAdmin: false,

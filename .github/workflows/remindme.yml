@@ -1,0 +1,40 @@
+name: RemindMe
+
+on:
+  push:
+    branches: [remindme-v1]
+  pull_request:
+    branches: [remindme-v1]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: remindme-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
+      - run: npm ci
+      - run: npm --prefix server ci
+      - run: npm run check
+      - run: npm test -- src/features/remindme src/features/auth src/features/settings src/features/layout/__tests__/Sidebar.localMode.test.tsx src/lib/__tests__/qrConfig.test.ts
+      - run: npm --prefix server test -- src/lib/captures src/__tests__/captures.test.ts src/__tests__/captureHistory.test.ts src/__tests__/localMode.test.ts src/__tests__/auth.test.ts src/lib/__tests__/binUpdateHelpers.test.ts
+      - run: npm run build
+      - run: npm --prefix server run build
+      - name: Build production container
+        run: docker build --build-arg BUILD_VERSION=remindme-${GITHUB_SHA::7} -t remindme:ci .
+      - name: Verify container and persistent storage
+        run: node scripts/docker-smoke.mjs remindme:ci

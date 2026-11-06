@@ -1,0 +1,47 @@
+name: remindme
+
+services:
+  remindme:
+    build:
+      context: .
+      args:
+        BUILD_EDITION: selfhosted
+        BUILD_VERSION: ${BUILD_VERSION:-local}
+    image: ${REMINDME_IMAGE:-remindme:local}
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    ports:
+      - "${HOST_BIND_IP:-127.0.0.1}:${HOST_PORT:-1453}:1453"
+    env_file: ${REMINDME_ENV_FILE:-.env}
+    environment:
+      NODE_ENV: production
+      SELF_HOSTED: 'true'
+      REMINDME_LOCAL_MODE: ${REMINDME_LOCAL_MODE:-true}
+      PORT: '1453'
+      # Capture/history currently require SQLite; do not accidentally connect a shared PostgreSQL DB.
+      DATABASE_URL: ''
+      DATABASE_PATH: /data/remindme.db
+      PHOTO_STORAGE_PATH: /data/photos
+      CAPTURE_SCRATCH_PATH: /scratch
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+    volumes:
+      - remindme_data:/data
+      - remindme_scratch:/scratch
+
+volumes:
+  remindme_data:
+  # Temporary capture images. Exclude this volume from every backup job.
+  remindme_scratch:

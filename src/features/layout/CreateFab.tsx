@@ -9,7 +9,7 @@ import { usePlan } from '@/lib/usePlan';
 import { cn, focusRing } from '@/lib/utils';
 import { useCreateFabSuppression } from './CreateFabContext';
 
-const HIDDEN_PATHS = new Set(['/capture', '/new-bin', '/scan']);
+const HIDDEN_PATHS = new Set(['/', '/remindme', '/capture', '/new-bin', '/scan']);
 
 const PILL_CLASS =
   'flat-heavy flex items-center gap-2 rounded-[var(--radius-lg)] px-4 py-2.5 text-[var(--text-primary)] shadow-md';

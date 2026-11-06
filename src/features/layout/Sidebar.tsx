@@ -6,6 +6,7 @@ import { useAppSettings } from '@/lib/appSettings';
 import { useAuth } from '@/lib/auth';
 import type { TermKey } from '@/lib/navItems';
 import { useNavigationGuard } from '@/lib/navigationGuard';
+import { useAuthStatusConfig } from '@/lib/qrConfig';
 import { useTerminology } from '@/lib/terminology';
 import { usePermissions } from '@/lib/usePermissions';
 import { usePlan } from '@/lib/usePlan';
@@ -110,6 +111,7 @@ export function SidebarContent({ locations, activeLocationId, onLocationChange, 
   const { settings } = useAppSettings();
   const t = useTerminology();
   const { logout } = useAuth();
+  const { config: { localMode } } = useAuthStatusConfig();
   const { canWrite } = usePermissions();
   const { isSelfHosted, isFree } = usePlan();
   const showProBadges = !isSelfHosted && isFree;
@@ -185,7 +187,7 @@ export function SidebarContent({ locations, activeLocationId, onLocationChange, 
           )}
           <NavButton path="/settings" label="Settings" icon={Settings} currentPath={location.pathname} navigate={navigate} onClick={onItemClick}
             collapsed={collapsed} />
-          <button
+          {!localMode && <button
             type="button"
             onClick={() => { logout(); onItemClick?.(); }}
             aria-label="Sign Out"
@@ -196,7 +198,7 @@ export function SidebarContent({ locations, activeLocationId, onLocationChange, 
             <span className={cn('truncate', collapsed && 'w-0 opacity-0')} aria-hidden={collapsed || undefined}>
               Sign Out
             </span>
-          </button>
+          </button>}
         </div>
       </div>
 

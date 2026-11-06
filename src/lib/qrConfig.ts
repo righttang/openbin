@@ -10,6 +10,7 @@ interface QrConfig {
 
 /** Public fields from GET /api/auth/status that other modules consume. */
 export interface AuthStatusConfig {
+  localMode: boolean;
   registrationMode: RegistrationMode;
   registrationEnabled: boolean;
   oauthProviders: string[];
@@ -24,6 +25,7 @@ let cached: QrConfig = { qrPayloadMode: 'app' };
 let selfHostedCached = true; // default true (safe: hides cloud-only UI until confirmed)
 let attachmentsEnabledCached = true; // default true — feature is on unless server opts out
 let authStatusCached: AuthStatusConfig = {
+  localMode: false,
   registrationMode: 'open',
   registrationEnabled: true,
   oauthProviders: [],
@@ -108,6 +110,7 @@ async function _doInit(): Promise<void> {
         ? data.registrationMode
         : 'open';
     authStatusCached = {
+      localMode: data.localMode === true,
       registrationMode: mode,
       registrationEnabled: data.registrationEnabled !== false,
       oauthProviders: Array.isArray(data.oauthProviders) ? data.oauthProviders : [],

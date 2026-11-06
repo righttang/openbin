@@ -4,6 +4,9 @@ dist/
 data/
 server/data/
 server/uploads/
+capture-scratch/
+server/capture-scratch/
+server/scratch/
 .superpowers/
 *.local
 *.log

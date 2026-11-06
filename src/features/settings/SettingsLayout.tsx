@@ -30,7 +30,7 @@ export function SettingsLayout() {
   const isIndex = pathname === '/settings' || pathname === '/settings/';
 
   if (isDesktop && isIndex) {
-    return <Navigate to="/settings/account" replace />;
+    return <Navigate to={`/settings/${mainCategories[0]?.path ?? 'preferences'}`} replace />;
   }
 
   const isWidePage = pathname.endsWith('/activity');

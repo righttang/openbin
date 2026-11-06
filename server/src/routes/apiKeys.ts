@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { Router } from 'express';
 import { d, generateUuid, query } from '../db.js';
 import { asyncHandler } from '../lib/asyncHandler.js';
+import { config } from '../lib/config.js';
 import { enforceCountLimit } from '../lib/countLimiter.js';
 import { NotFoundError } from '../lib/httpErrors.js';
 import { createLogger } from '../lib/logger.js';
@@ -10,6 +11,10 @@ import { requirePro } from '../middleware/requirePlan.js';
 
 const log = createLogger('apiKeys');
 const router = Router();
+router.use((_req, res, next) => {
+  if (!config.localMode) return next();
+  res.status(404).json({ error: 'NOT_FOUND', message: 'API keys are disabled in local mode' });
+});
 router.use(authenticate);
 
 const MAX_KEYS_PER_USER = 10;

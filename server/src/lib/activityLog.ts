@@ -12,7 +12,7 @@ export interface LogActivityOptions {
   entityId?: string;
   entityName?: string;
   changes?: Record<string, { old: unknown; new: unknown }>;
-  authMethod?: 'jwt' | 'api_key';
+  authMethod?: 'jwt' | 'api_key' | 'local';
   apiKeyId?: string;
 }
 

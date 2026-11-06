@@ -61,29 +61,57 @@ export interface ItemChanges {
 }
 
 export async function replaceBinItems(binId: string, newItems: unknown[]): Promise<ItemChanges | null> {
-  const oldItemsResult = await query<{ name: string }>(
-    'SELECT name FROM bin_items WHERE bin_id = $1 AND deleted_at IS NULL ORDER BY position',
-    [binId]
-  );
-  const oldItemNames = oldItemsResult.rows.map((r) => r.name);
+  const normalizeName = (name: string) => name.normalize('NFKC').trim().toLocaleLowerCase('en-US').replace(/\s+/g, ' ');
+  const incoming = newItems.flatMap((item, position) => {
+    const fields = typeof item === 'object' && item !== null ? item as { name?: unknown; quantity?: number | null } : null;
+    const name = typeof item === 'string' ? item : fields?.name;
+    if (typeof name !== 'string' || !name.trim()) return [];
+    return [{ name, normalizedName: normalizeName(name), quantity: fields?.quantity, position }];
+  });
+  const newCounts = new Map<string, number>();
+  for (const item of incoming) newCounts.set(item.normalizedName, (newCounts.get(item.normalizedName) ?? 0) + 1);
 
-  await withTransaction(async (tx) => {
-    await tx('DELETE FROM bin_items WHERE bin_id = $1', [binId]);
-    for (let i = 0; i < newItems.length; i++) {
-      const item = newItems[i];
-      const itemName = typeof item === 'string' ? item : (item as { name: string }).name;
-      const itemQty = typeof item === 'object' && item !== null ? ((item as { quantity?: number | null }).quantity ?? null) : null;
-      if (!itemName) continue;
-      await tx(
-        'INSERT INTO bin_items (id, bin_id, name, quantity, position) VALUES ($1, $2, $3, $4, $5)',
-        [generateUuid(), binId, itemName, itemQty, i],
-      );
+  const oldItemNames = await withTransaction(async (tx) => {
+    const oldItems = (await tx<{ id: string; name: string; quantity: number | null }>(
+      'SELECT id, name, quantity FROM bin_items WHERE bin_id = $1 AND deleted_at IS NULL ORDER BY position',
+      [binId],
+    )).rows;
+    const oldByName = new Map<string, typeof oldItems>();
+    for (const old of oldItems) {
+      const normalized = normalizeName(old.name);
+      oldByName.set(normalized, [...(oldByName.get(normalized) ?? []), old]);
     }
+    const keptIds: string[] = [];
+    for (const item of incoming) {
+      const candidates = oldByName.get(item.normalizedName);
+      // Legacy list editors do not carry item IDs. Preserve identity only for
+      // an unambiguous same-name match; duplicates and renames establish new rows.
+      const matched = candidates?.length === 1 && newCounts.get(item.normalizedName) === 1 ? candidates[0] : undefined;
+      if (matched) {
+        keptIds.push(matched.id);
+        await tx(
+          `UPDATE bin_items SET name = $1, quantity = $2, position = $3, updated_at = ${d.now()} WHERE id = $4 AND bin_id = $5`,
+          [item.name, item.quantity === undefined ? matched.quantity : item.quantity, item.position, matched.id, binId],
+        );
+      } else {
+        const id = generateUuid();
+        keptIds.push(id);
+        await tx(
+          'INSERT INTO bin_items (id, bin_id, name, quantity, position) VALUES ($1, $2, $3, $4, $5)',
+          [id, binId, item.name, item.quantity ?? null, item.position],
+        );
+      }
+    }
+    if (keptIds.length) {
+      const placeholders = keptIds.map((_, index) => `$${index + 2}`).join(', ');
+      await tx(`DELETE FROM bin_items WHERE bin_id = $1 AND id NOT IN (${placeholders})`, [binId, ...keptIds]);
+    } else {
+      await tx('DELETE FROM bin_items WHERE bin_id = $1', [binId]);
+    }
+    return oldItems.map((item) => item.name);
   });
 
-  const newItemNames = newItems.map((item) =>
-    typeof item === 'string' ? item : (item as { name: string }).name
-  );
+  const newItemNames = incoming.map((item) => item.name);
   const added = newItemNames.filter((n: string) => !oldItemNames.includes(n));
   const removed = oldItemNames.filter((n) => !newItemNames.includes(n));
 

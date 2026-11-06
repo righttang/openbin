@@ -3,6 +3,11 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SettingsLayout } from '../SettingsLayout';
 
+const status = vi.hoisted(() => ({ localMode: false }));
+vi.mock('@/lib/qrConfig', () => ({
+  useAuthStatusConfig: () => ({ config: { localMode: status.localMode }, loaded: true }),
+}));
+
 vi.mock('@/lib/auth', () => ({
   useAuth: vi.fn(() => ({ user: { id: '1', email: 'test@example.com', isAdmin: false }, activeLocationId: 'loc-1', token: 't' })),
 }));
@@ -50,12 +55,29 @@ function renderSettings(initialPath: string) {
 describe('SettingsLayout', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    status.localMode = false;
   });
 
   it('desktop: /settings redirects to /settings/account', () => {
     setDesktop(true);
     renderSettings('/settings');
     expect(screen.getByTestId('account-content')).toBeTruthy();
+  });
+
+  it('local desktop: /settings opens preferences and hides the account link', () => {
+    status.localMode = true;
+    setDesktop(true);
+    renderSettings('/settings');
+    expect(screen.getByTestId('preferences-content')).toBeTruthy();
+    expect(screen.queryByRole('link', { name: /account/i })).toBeNull();
+  });
+
+  it('local mobile: settings has no account category', () => {
+    status.localMode = true;
+    setDesktop(false);
+    renderSettings('/settings');
+    expect(screen.getByText('Preferences')).toBeTruthy();
+    expect(screen.queryByText('Account')).toBeNull();
   });
 
   it('mobile: /settings shows category list', () => {

@@ -2,6 +2,7 @@ import { ChevronRight, Clock, List, LogOut, Pencil, Settings, Trash2 } from 'luc
 import { useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Tooltip } from '@/components/ui/tooltip';
+import { useAuthStatusConfig } from '@/lib/qrConfig';
 import { useClickOutside } from '@/lib/useClickOutside';
 import { usePopover } from '@/lib/usePopover';
 import { cn } from '@/lib/utils';
@@ -17,6 +18,7 @@ interface LocationSettingsMenuProps {
 }
 
 export function LocationSettingsMenu({ isAdmin, onRename, onRetention, onCustomFields, onDelete, onLeave, compact }: LocationSettingsMenuProps) {
+  const { config: { localMode } } = useAuthStatusConfig();
   const { visible, animating, isOpen, close, toggle } = usePopover();
   const menuRef = useRef<HTMLDivElement>(null);
   useClickOutside(menuRef, close);
@@ -27,6 +29,7 @@ export function LocationSettingsMenu({ isAdmin, onRename, onRetention, onCustomF
   }
 
   if (!isAdmin) {
+    if (localMode) return null;
     return (
       <Tooltip content="Leave" side="bottom">
         <Button
@@ -87,7 +90,7 @@ export function LocationSettingsMenu({ isAdmin, onRename, onRetention, onCustomF
             onClick={() => handleItem(onRetention)}
           >
             <Clock className="h-4 w-4 text-[var(--text-tertiary)]" />
-            Retention & Roles
+            {localMode ? 'Retention' : 'Retention & Roles'}
           </button>
           <button
             type="button"

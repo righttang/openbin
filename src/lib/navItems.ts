@@ -12,7 +12,8 @@ export interface NavItem {
 }
 
 export const navItems: NavItem[] = [
-  { path: '/', label: 'Home', icon: LayoutDashboard },
+  { path: '/', label: 'RemindMe', icon: PackageSearch },
+  { path: '/dashboard', label: 'Overview', icon: LayoutDashboard },
   { path: '/bins', label: 'Bins', icon: Package, termKey: 'Bins' },
   { path: '/locations', label: 'Locations', icon: MapPin, termKey: 'Locations' },
   { path: '/checkouts', label: 'Checked Out', icon: PackageSearch },

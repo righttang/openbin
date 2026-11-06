@@ -3,6 +3,7 @@ import React, { Suspense, useEffect } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { ToastProvider, useToast } from '@/components/ui/toast';
+import { AccountRoute } from '@/features/auth/AccountRoute';
 import { AuthGuard } from '@/features/auth/AuthGuard';
 import { AppLayout } from '@/features/layout/AppLayout';
 import { LocationProvider } from '@/features/locations/useLocations';
@@ -94,6 +95,10 @@ const TagsPage = lazyWithRetry(() =>
 
 const DashboardPage = lazyWithRetry(() =>
   import('@/features/dashboard/DashboardPage').then((m) => ({ default: m.DashboardPage }))
+);
+
+const RemindMePage = lazyWithRetry(() =>
+  import('@/features/remindme/RemindMePage').then((m) => ({ default: m.RemindMePage }))
 );
 
 const ItemsPage = lazyWithRetry(() =>
@@ -390,13 +395,13 @@ export default function App() {
             <PlanErrorNotifier />
             <Routes>
               {/* Public routes */}
-              <Route path="/login" element={<RouteWithBoundary><LoginPage /></RouteWithBoundary>} />
-              <Route path="/register" element={<RouteWithBoundary><RegisterPage /></RouteWithBoundary>} />
-              <Route path="/forgot-password" element={<RouteWithBoundary><ForgotPasswordPage /></RouteWithBoundary>} />
-              <Route path="/reset-password" element={<RouteWithBoundary><ResetPasswordPage /></RouteWithBoundary>} />
+              <Route path="/login" element={<AccountRoute><RouteWithBoundary><LoginPage /></RouteWithBoundary></AccountRoute>} />
+              <Route path="/register" element={<AccountRoute><RouteWithBoundary><RegisterPage /></RouteWithBoundary></AccountRoute>} />
+              <Route path="/forgot-password" element={<AccountRoute><RouteWithBoundary><ForgotPasswordPage /></RouteWithBoundary></AccountRoute>} />
+              <Route path="/reset-password" element={<AccountRoute><RouteWithBoundary><ResetPasswordPage /></RouteWithBoundary></AccountRoute>} />
               <Route path="/terms" element={<RouteWithBoundary><TermsPage /></RouteWithBoundary>} />
               <Route path="/privacy" element={<RouteWithBoundary><PrivacyPage /></RouteWithBoundary>} />
-              <Route path="/auth/complete-signup" element={<RouteWithBoundary><CompleteSignupPage /></RouteWithBoundary>} />
+              <Route path="/auth/complete-signup" element={<AccountRoute><RouteWithBoundary><CompleteSignupPage /></RouteWithBoundary></AccountRoute>} />
               <Route path="/s/:token" element={<RouteWithBoundary><SharedBinPage /></RouteWithBoundary>} />
 
               {/* Protected routes */}
@@ -413,14 +418,16 @@ export default function App() {
                   </AuthGuard>
                 }
               >
-                <Route path="/" element={<RouteWithBoundary><DashboardPage /></RouteWithBoundary>} />
+                <Route path="/" element={<RouteWithBoundary><RemindMePage /></RouteWithBoundary>} />
+                <Route path="/remindme" element={<RouteWithBoundary><RemindMePage /></RouteWithBoundary>} />
+                <Route path="/dashboard" element={<RouteWithBoundary><DashboardPage /></RouteWithBoundary>} />
                 <Route path="/bins" element={<RouteWithBoundary><BinListPage /></RouteWithBoundary>} />
                 <Route path="/bin/:id" element={<RouteWithBoundary><BinDetailPage /></RouteWithBoundary>} />
                 <Route path="/scan" element={<ScanRedirect />} />
                 <Route path="/print" element={<RouteWithBoundary><PrintPage /></RouteWithBoundary>} />
                 <Route path="/settings" element={<RouteWithBoundary><SettingsLayout /></RouteWithBoundary>}>
-                  <Route path="account" element={<AccountSection />} />
-                  {EESubscriptionSection && <Route path="subscription" element={<Suspense fallback={null}><EESubscriptionSection /></Suspense>} />}
+                  <Route path="account" element={<AccountRoute redirectTo="/settings/preferences"><AccountSection /></AccountRoute>} />
+                  {EESubscriptionSection && <Route path="subscription" element={<AccountRoute redirectTo="/settings/preferences"><Suspense fallback={null}><EESubscriptionSection /></Suspense></AccountRoute>} />}
                   <Route path="preferences" element={<PreferencesSection />} />
                   <Route path="personalization" element={<SettingsPersonalizationSection />} />
                   <Route path="ai" element={<AiSection />} />
@@ -440,9 +447,9 @@ export default function App() {
                 <Route path="/reorganize" element={<RouteWithBoundary><ReorganizePage /></RouteWithBoundary>} />
                 <Route path="/new-bin" element={<RouteWithBoundary><NewBinPage /></RouteWithBoundary>} />
                 <Route path="/capture" element={<RouteWithBoundary><CapturePage /></RouteWithBoundary>} />
-                <Route path="/admin/users" element={<RouteWithBoundary><AdminUsersPage /></RouteWithBoundary>} />
-                <Route path="/admin/users/:id" element={<RouteWithBoundary><AdminUserDetailPage /></RouteWithBoundary>} />
-                <Route path="/admin/system" element={<RouteWithBoundary><AdminSystemPage /></RouteWithBoundary>} />
+                <Route path="/admin/users" element={<AccountRoute><RouteWithBoundary><AdminUsersPage /></RouteWithBoundary></AccountRoute>} />
+                <Route path="/admin/users/:id" element={<AccountRoute><RouteWithBoundary><AdminUserDetailPage /></RouteWithBoundary></AccountRoute>} />
+                <Route path="/admin/system" element={<AccountRoute><RouteWithBoundary><AdminSystemPage /></RouteWithBoundary></AccountRoute>} />
                 <Route path="*" element={<NotFoundPage />} />
               </Route>
             </Routes>

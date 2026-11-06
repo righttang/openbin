@@ -17,9 +17,10 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg', 'pwa-192x192.png', 'pwa-512x512.png'],
       manifest: {
-        name: 'OpenBin',
-        short_name: 'OpenBin',
-        description: 'Inventory with intelligence. Organize physical storage with QR codes and photo recognition.',
+        name: 'RemindMe',
+        short_name: 'RemindMe',
+        description: 'Remember what is stored where. Capture a drawer, then find its contents later.',
+        start_url: '/remindme',
         theme_color: '#000000',
         background_color: '#000000',
         display: 'standalone',
@@ -67,6 +68,7 @@ export default defineConfig({
     },
   },
   server: {
+    watch: { ignored: ['**/server/**'] },
     proxy: {
       '/api': {
         target: 'http://localhost:1453',

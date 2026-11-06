@@ -28,7 +28,7 @@ export async function executeActions(
   locationId: string,
   userId: string,
   userName: string,
-  authMethod?: 'jwt' | 'api_key',
+  authMethod?: 'jwt' | 'api_key' | 'local',
   apiKeyId?: string,
 ): Promise<ExecuteResult> {
   if (actions.length > MAX_ACTIONS) {

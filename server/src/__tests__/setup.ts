@@ -16,6 +16,14 @@ beforeAll(async () => {
 });
 
 const TABLES = [
+  'observation_photos',
+  'capture_photo_history',
+  'capture_item_baselines',
+  'observations',
+  'analysis_jobs',
+  'capture_photos',
+  'capture_batches',
+  'bin_capture_state',
   'email_log',
   'refresh_tokens',
   'scan_history',

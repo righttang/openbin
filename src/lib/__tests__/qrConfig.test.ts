@@ -29,6 +29,16 @@ describe('qrConfig', () => {
     expect(getQrConfig()).toEqual({ qrPayloadMode: 'url', baseUrl: 'https://example.com' });
   });
 
+  it('exposes the server-selected local mode for account-free navigation', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ localMode: true, registrationMode: 'closed', registrationEnabled: false }),
+    });
+    const { getAuthStatusConfig, initQrConfig } = await import('@/lib/qrConfig');
+    await initQrConfig();
+    expect(getAuthStatusConfig()).toMatchObject({ localMode: true, registrationEnabled: false });
+  });
+
   it('stays app mode when server returns app', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,

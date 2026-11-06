@@ -88,14 +88,16 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
 ];
 
 interface FilterOptions {
+  localMode?: boolean;
   isAdmin: boolean;
   isEE: boolean;
   isSiteAdmin: boolean;
 }
 
 export function filterCategories(options: FilterOptions): SettingsCategory[] {
-  const { isAdmin, isEE, isSiteAdmin } = options;
+  const { localMode, isAdmin, isEE, isSiteAdmin } = options;
   return SETTINGS_CATEGORIES.filter((cat) => {
+    if (localMode && (cat.id === 'account' || cat.id === 'subscription' || cat.id === 'admin')) return false;
     if (!cat.gate) return true;
     if (cat.gate === 'admin') return isAdmin;
     if (cat.gate === 'ee') return isEE;

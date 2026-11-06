@@ -16,15 +16,16 @@ const router = Router();
 
 // GET /api/auth/status — public (no auth required)
 router.get('/status', async (_req, res) => {
-  const regMode = await getRegistrationMode();
+  const regMode = config.localMode ? 'closed' : await getRegistrationMode();
   const body: Record<string, unknown> = {
     registrationEnabled: regMode !== 'closed',
+    localMode: config.localMode,
     registrationMode: regMode,
     demoMode: config.demoMode,
     qrPayloadMode: config.qrPayloadMode,
     selfHosted: config.selfHosted,
     attachmentsEnabled: config.attachmentsEnabled,
-    oauthProviders: getOAuthProviders(),
+    oauthProviders: config.localMode ? [] : getOAuthProviders(),
     oidcDisplayName: config.oidcDisplayName,
     tosVersion: config.selfHosted ? null : CURRENT_TOS_VERSION,
     privacyVersion: config.selfHosted ? null : CURRENT_PRIVACY_VERSION,
