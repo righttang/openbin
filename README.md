@@ -1,5 +1,7 @@
 # RemindMe
 
+提供 [原生 iOS 客户端](ios/README.md)：内网免登录，持续取景拍摄、自动识别、物品查找与删除撤销。用 Xcode 打开 `ios/RemindMe.xcodeproj` 即可构建。
+
 家中物品查找工具：选一个地点，点拍照直接打开相机；每拍一张便自动上传识别，可以接着拍下一张。之后按名称、描述或别名搜索，查看位置、最后看到的时间和数量。
 
 第一版基于 [OpenBin](https://github.com/akifbayram/openbin/tree/7ffc01a086c8d8c52afcb8db2faed50b93a3d3d5)，基线固定为 `7ffc01a086c8d8c52afcb8db2faed50b93a3d3d5`。界面只提供扫描、查找、地点管理和照片历史四个平级页面，无需登录和注册。[原项目说明](README.upstream.md)、[许可证](LICENSE) 和代码中的版权声明保留；本项目使用自托管社区版本。详细设计见 [PLAN.md](PLAN.md)。

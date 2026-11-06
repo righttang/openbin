@@ -21,6 +21,13 @@ beforeEach(() => { vi.clearAllMocks(); mocks.tasks = []; localStorage.clear(); }
 const page = () => <MemoryRouter><RemindMePage /></MemoryRouter>;
 
 describe('one tap camera', () => {
+  it('opens the selected photo result directly after acknowledgement', () => {
+    mocks.tasks = [task({ accepted: true, phase: 'done' })];
+    render(page());
+    expect(screen.getByRole('link', { name: '查看本次结果' })).toHaveAttribute('href', '/history?place=drawer&capture=capture');
+    expect(screen.getByRole('link', { name: '查看抽屉 A的本次识别结果' })).toHaveAttribute('href', '/history?place=drawer&capture=capture');
+  });
+
   it('opens the camera synchronously without creating a server capture first', async () => {
     render(page());
     const button = screen.getByRole('button', { name: '拍照' });

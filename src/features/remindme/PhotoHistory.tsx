@@ -14,6 +14,7 @@ interface PhotoHistoryProps {
   onDeleted: (captureId: string) => void;
   onSelectItem: (item: ItemDetailData) => void;
   compactHeading?: boolean;
+  captureId?: string;
 }
 
 const inProgress = (state: PhotoHistoryRecord['state']) => ['uploading', 'queued', 'processing'].includes(state);
@@ -30,7 +31,7 @@ function Preview({ photo }: { photo: PhotoHistoryRecord }) {
     : <div className="flex aspect-[4/3] flex-col items-center justify-center gap-2 bg-[var(--bg-active)] p-4 text-center text-xs text-[var(--text-secondary)]"><ImageOff className="h-7 w-7 text-[var(--text-tertiary)]" /><span>暂无照片预览</span><span>{inProgress(photo.state) ? '照片上传后显示预览' : '照片未保留或已清理，文字结果仍可查看'}</span></div>;
 }
 
-export function PhotoHistory({ binId, locationId, refreshKey, onResultsChanged, onDeleted, onSelectItem, compactHeading = false }: PhotoHistoryProps) {
+export function PhotoHistory({ binId, locationId, refreshKey, onResultsChanged, onDeleted, onSelectItem, compactHeading = false, captureId }: PhotoHistoryProps) {
   const [photos, setPhotos] = useState<PhotoHistoryRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -60,7 +61,7 @@ export function PhotoHistory({ binId, locationId, refreshKey, onResultsChanged, 
         if (binId) params.set('bin_id', binId);
         const data = await apiFetch<{ photos: PhotoHistoryRecord[] }>(`/api/captures/history?${params}`, { signal: controller.signal });
         if (controller.signal.aborted) return;
-        const next = (data.photos ?? []).filter((photo) => !removed.current.has(photoKey(photo)));
+        const next = (data.photos ?? []).filter((photo) => !removed.current.has(photoKey(photo)) && (!captureId || photo.capture_id === captureId));
         const signature = JSON.stringify(next.map((photo) => [photoKey(photo), photo.state, photo.items.map((item) => item.observation_id)]));
         if (previousSignature.current && previousSignature.current !== signature) onResultsChanged();
         previousSignature.current = signature;
@@ -75,7 +76,7 @@ export function PhotoHistory({ binId, locationId, refreshKey, onResultsChanged, 
     };
     void fetchHistory();
     return () => { controller.abort(); clearTimeout(timer); };
-  }, [binId, locationId, refreshKey, retry, onResultsChanged]);
+  }, [binId, locationId, refreshKey, retry, onResultsChanged, captureId]);
 
   const remove = useCallback(async (photo: PhotoHistoryRecord) => {
     const key = photoKey(photo);
@@ -99,10 +100,10 @@ export function PhotoHistory({ binId, locationId, refreshKey, onResultsChanged, 
     {error && <div role="alert" className="mb-4 flex flex-wrap items-center gap-2 text-sm text-red-600"><span>{error}</span><Button size="sm" variant="outline" onClick={() => setRetry((value) => value + 1)}>重试</Button></div>}
     {loading && photos.length === 0 ? <p className="py-6 text-center text-sm text-[var(--text-secondary)]">正在加载识别历史…</p>
       : photos.length === 0 && !error ? <p className="rounded-xl border border-dashed border-[var(--border-flat)] px-4 py-8 text-center text-sm text-[var(--text-secondary)]">还没有照片记录。拍摄并上传后，在这里查看每张照片识别出了什么。</p>
-        : <div className="grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-3">{photos.map((photo, index) => {
+        : <div className={captureId ? 'grid max-w-3xl items-start gap-4' : 'grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-3'}>{photos.map((photo, index) => {
           const key = photoKey(photo);
           const isDeleting = deleting.includes(key);
-          return <article key={key} aria-label={`照片记录 ${index + 1}：${photo.bin_name}`} className="min-w-0 overflow-hidden rounded-xl border border-[var(--border-flat)]">
+          return <article key={key} aria-label={`照片记录 ${index + 1}：${photo.bin_name}`} className={`min-w-0 overflow-hidden rounded-xl border border-[var(--border-flat)] ${captureId ? 'sm:grid sm:grid-cols-2 sm:items-start' : ''}`}>
             <div className="relative"><Preview key={photo.preview_url} photo={photo} />
               <button type="button" aria-label={`删除照片记录 ${index + 1}`} title="删除这张照片记录及其独有的识别结果" disabled={isDeleting} onClick={() => void remove(photo)} className="absolute right-2 top-2 rounded-full bg-black/65 p-2.5 text-white shadow-sm hover:bg-black/80 disabled:opacity-50">{isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />}</button>
             </div>

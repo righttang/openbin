@@ -26,11 +26,11 @@ beforeEach(() => {
 });
 
 describe('simple search', () => {
-  it('starts with a search prompt instead of dumping all inventory or history', () => {
+  it('loads recent items immediately without requiring a keyword', async () => {
     render(<MemoryRouter><FindPage /></MemoryRouter>);
     expect(screen.getByRole('heading', { name: '查找' })).toBeInTheDocument();
-    expect(screen.getByText('输入关键词，找到物品最后出现的地点。')).toBeInTheDocument();
-    expect(mocks.api).not.toHaveBeenCalled();
+    expect(await screen.findByText('还没有物品，去扫描页拍张照片吧。')).toBeInTheDocument();
+    expect(mocks.api).toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: '开始新的拍摄' })).not.toBeInTheDocument();
   });
 
@@ -111,4 +111,13 @@ it('loads history across all places and allows a flat place filter', async () =>
   fireEvent.change(screen.getByRole('combobox', { name: '历史地点' }), { target: { value: 'drawer' } });
   await waitFor(() => expect(mocks.api.mock.calls.some(([path]) => String(path).includes('bin_id=drawer'))).toBe(true));
   expect(screen.queryByRole('textbox', { name: '搜索物品' })).not.toBeInTheDocument();
+});
+
+it('opens only the selected capture and provides a route back to all history', async () => {
+  const photo = { photo_id: 'photo', bin_id: 'drawer', captured_at: '2026-11-06T09:00:00Z', state: 'applied', items: [], preview_url: null };
+  mocks.api.mockResolvedValue({ photos: [{ ...photo, capture_id: 'target', bin_name: '本次抽屉' }, { ...photo, capture_id: 'other', bin_name: '其他照片' }] });
+  render(<MemoryRouter initialEntries={['/history?place=drawer&capture=target']}><HistoryPage /></MemoryRouter>);
+  expect(await screen.findByText('本次抽屉')).toBeInTheDocument();
+  expect(screen.queryByText('其他照片')).not.toBeInTheDocument();
+  expect(screen.getByRole('link', { name: '查看全部照片历史' })).toHaveAttribute('href', '/history');
 });

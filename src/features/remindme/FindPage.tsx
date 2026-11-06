@@ -27,7 +27,7 @@ export function FindPage() {
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: inventory mutations require fresh search results
   useEffect(() => {
-    if (!activeLocationId || !searching) { setItems([]); setLoading(false); setError(''); return; }
+    if (!activeLocationId) { setItems([]); setLoading(false); setError(''); return; }
     const controller = new AbortController();
     setLoading(true);
     const timer = setTimeout(() => {
@@ -65,11 +65,10 @@ export function FindPage() {
     <div className="relative"><Search className="absolute left-4 top-4 h-5 w-5 text-[var(--text-tertiary)]" /><input aria-label="搜索物品" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="例如：剪刀、白色充电线" className="w-full rounded-xl border border-[var(--border-flat)] bg-[var(--bg-input)] py-3.5 pl-12 pr-4 text-base outline-none focus:ring-2 focus:ring-[var(--accent)]" /></div>
     <label className="mt-4 flex items-center gap-3 text-sm text-[var(--text-secondary)]">地点<select aria-label="查找地点" value={place} onChange={(event) => setParams(event.target.value ? { place: event.target.value } : {})} className="min-w-0 flex-1 rounded-lg border border-[var(--border-flat)] bg-[var(--bg-input)] px-3 py-2.5 text-sm text-[var(--text-primary)]"><option value="">所有地点</option>{bins.map((bin) => <option key={bin.id} value={bin.id}>{bin.name}</option>)}</select></label>
     <div className="mt-7" aria-live="polite">
-      {!searching ? <div className="py-14 text-center"><Search className="mx-auto mb-4 h-8 w-8 text-[var(--text-tertiary)]" /><p className="text-sm text-[var(--text-secondary)]">输入关键词，找到物品最后出现的地点。</p></div>
-        : loading ? <p className="py-12 text-center text-sm text-[var(--text-secondary)]">正在查找…</p>
+      {loading ? <p className="py-12 text-center text-sm text-[var(--text-secondary)]">正在查找…</p>
           : error ? <p role="alert" className="py-8 text-center text-sm text-red-600">{error}</p>
-            : items.length === 0 ? <p className="py-12 text-center text-sm text-[var(--text-secondary)]">没有找到，试试其他名称或描述。</p>
-              : <><p className="mb-2 text-xs text-[var(--text-tertiary)]">找到 {items.length} 类物品</p><ul className="divide-y divide-[var(--border-flat)]">{items.map((item) => <li key={item.id} className="relative">
+            : items.length === 0 ? <p className="py-12 text-center text-sm text-[var(--text-secondary)]">{searching ? '没有找到，试试其他名称或描述。' : '还没有物品，去扫描页拍张照片吧。'}</p>
+              : <><p className="mb-2 text-xs text-[var(--text-tertiary)]">{searching ? `找到 ${items.length} 类物品` : `最近看到 · ${Math.min(items.length, 20)} 类物品`}</p><ul className="divide-y divide-[var(--border-flat)]">{(searching ? items : items.slice(0, 20)).map((item) => <li key={item.id} className="relative">
                 <button type="button" aria-label={`查看${item.name}详情`} onClick={() => setDetail({ name: item.name, description: item.description, aliases: item.aliases, quantity: item.quantity, location: item.bin_name, binId: item.bin_id, seenAt: item.last_seen_at, cropUrl: item.crop_url, previewUrl: item.photo_preview_url })} className="flex w-full items-center gap-3 py-5 text-left hover:text-[var(--accent)]">
                   {item.crop_url && <img src={item.crop_url} alt="" className="h-16 w-16 shrink-0 rounded-lg bg-[var(--bg-active)] object-contain" />}
                   <span className="min-w-0 flex-1"><span className="block font-medium">{item.name}</span><span className="mt-1.5 flex items-center gap-1 text-sm text-[var(--text-secondary)]"><MapPin className="h-3.5 w-3.5" />{item.bin_name}</span><span className="mt-1 block text-xs text-[var(--text-tertiary)]">{item.observation_state === 'not_seen_in_latest_capture' ? '最近未见 · ' : ''}{displayCaptureDate(item.last_seen_at)}</span></span>
