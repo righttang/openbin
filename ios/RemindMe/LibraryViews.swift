@@ -92,32 +92,42 @@ struct PhotoDetailView: View {
     @EnvironmentObject var store: AppStore
     @Environment(\.dismiss) private var dismiss
     let photo: HistoryPhoto
+    var wholeScan = false
     @State private var confirm = false
     @State private var deleting = false
     @State private var error: String?
     private var current: HistoryPhoto { store.history.first { $0.id == photo.id } ?? photo }
+    private var photos: [HistoryPhoto] {
+        let entries = wholeScan ? store.history.filter { $0.capture_id == photo.capture_id } : [current]
+        return entries.isEmpty ? [photo] : entries
+    }
     var body: some View {
         List {
-            RemotePhoto(path: current.preview_url, fit: true).frame(maxWidth: .infinity).frame(height: 230).listRowInsets(EdgeInsets()).listRowSeparator(.hidden)
-            Section {
-                Label(current.bin_name, systemImage: "mappin.and.ellipse")
-                Text("\(photoDate(current.captured_at)) · \(stateLabel(current.state))").font(.footnote).foregroundStyle(.secondary)
-            }
-            Section("识别出 \(current.items.count) 类物品") {
-                ForEach(current.items) { item in
-                    let inventory = InventoryItem(id: item.item_id ?? item.id, name: item.name, description: item.description, aliases: item.aliases, quantity: item.quantity, bin_id: current.bin_id, bin_name: current.bin_name, last_seen_at: current.captured_at, crop_url: item.crop_url, photo_preview_url: current.preview_url)
-                    NavigationLink { ItemDetailView(item: inventory, canDelete: false) } label: { ItemRow(item: inventory) }
+            ForEach(photos) { entry in
+                RemotePhoto(path: entry.preview_url, fit: true).frame(maxWidth: .infinity).frame(height: 230).listRowInsets(EdgeInsets()).listRowSeparator(.hidden)
+                Section {
+                    Label(entry.bin_name, systemImage: "mappin.and.ellipse")
+                    Text("\(photoDate(entry.captured_at)) · \(stateLabel(entry.state))").font(.footnote).foregroundStyle(.secondary)
                 }
-                if current.items.isEmpty { Text(["queued", "processing", "uploading"].contains(current.state) ? "处理完成后会自动显示结果。" : "这张照片没有识别结果，可以重新拍摄。").font(.subheadline).foregroundStyle(.secondary) }
+                Section("识别出 \(entry.items.count) 类物品") {
+                    ForEach(entry.items) { item in
+                        let inventory = InventoryItem(id: item.item_id ?? item.id, name: item.name, description: item.description, aliases: item.aliases, quantity: item.quantity, bin_id: entry.bin_id, bin_name: entry.bin_name, last_seen_at: entry.captured_at, crop_url: item.crop_url, photo_preview_url: entry.preview_url)
+                        NavigationLink { ItemDetailView(item: inventory, canDelete: false) } label: { ItemRow(item: inventory) }
+                    }
+                    if entry.items.isEmpty { Text(["queued", "processing", "uploading"].contains(entry.state) ? "处理完成后会自动显示结果。" : "这张照片没有识别结果，可以重新拍摄。").font(.subheadline).foregroundStyle(.secondary) }
+                }
             }
             if let error { Text(error).foregroundStyle(.red) }
-            Button("删除这张照片记录", role: .destructive) { confirm = true }.disabled(deleting)
+            Button(wholeScan ? "删除整次扫描" : "删除这张照片记录", role: .destructive) { confirm = true }.disabled(deleting)
         }.listStyle(.plain).navigationTitle("识别结果").navigationBarTitleDisplayMode(.inline)
-            .confirmationDialog("删除照片及其独有识别结果？其他照片中的物品会保留，此操作不能撤销。", isPresented: $confirm, titleVisibility: .visible) {
-                Button("删除照片记录", role: .destructive) {
+            .confirmationDialog(wholeScan ? "删除整次扫描的照片及其独有识别结果？其他扫描中的物品会保留，此操作不能撤销。" : "删除照片及其独有识别结果？其他照片中的物品会保留，此操作不能撤销。", isPresented: $confirm, titleVisibility: .visible) {
+                Button(wholeScan ? "删除整次扫描" : "删除照片记录", role: .destructive) {
                     deleting = true
                     Task {
-                        do { try await store.deletePhoto(current); dismiss() }
+                        do {
+                            if wholeScan { try await store.deleteScan(current) } else { try await store.deletePhoto(current) }
+                            dismiss()
+                        }
                         catch { self.error = "删除失败，请重试。" }
                         deleting = false
                     }

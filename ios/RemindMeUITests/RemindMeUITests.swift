@@ -1,22 +1,72 @@
 import XCTest
+import CryptoKit
+import UIKit
 
 final class RemindMeUITests: XCTestCase {
     private var csrf = ""
     private var fixtureID: String?
-    private func fixtureAPI(_ path: String, method: String = "GET", body: [String: Any]? = nil) async throws -> [String: Any] {
+    private var captureIDs: [String] = []
+    private func fixtureAPI(_ path: String, method: String = "GET", body: [String: Any]? = nil, rawBody: Data? = nil, headers: [String: String] = [:]) async throws -> [String: Any] {
         var request = URLRequest(url: URL(string: "http://127.0.0.1:1453" + path)!)
         request.httpMethod = method
         request.setValue("openbin-csrf=\(csrf)", forHTTPHeaderField: "Cookie")
         request.setValue(csrf, forHTTPHeaderField: "X-CSRF-Token")
         if let body { request.httpBody = try JSONSerialization.data(withJSONObject: body); request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
+        if let rawBody { request.httpBody = rawBody }
+        for (key, value) in headers { request.setValue(value, forHTTPHeaderField: key) }
         let (data, response) = try await URLSession.shared.data(for: request)
         let http = try XCTUnwrap(response as? HTTPURLResponse)
-        guard (200..<300).contains(http.statusCode) else { throw NSError(domain: "Local fixture API", code: http.statusCode) }
+        guard (200..<300).contains(http.statusCode) else { throw NSError(domain: "Local fixture API", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: "\(method) \(path): \(String(data: data, encoding: .utf8) ?? "Invalid response")"]) }
         if let header = http.value(forHTTPHeaderField: "Set-Cookie"), let token = HTTPCookie.cookies(withResponseHeaderFields: ["Set-Cookie": header], for: request.url!).first(where: { $0.name == "openbin-csrf" })?.value { csrf = token }
         return try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
     }
     override func tearDown() async throws {
+        if let id = fixtureID {
+            for captureID in captureIDs { _ = try await fixtureAPI("/api/captures/\(captureID)/cancel", method: "POST", body: ["bin_id": id]) }
+        }
         if let id = fixtureID { _ = try await fixtureAPI("/api/bins/\(id)", method: "DELETE") }
+    }
+    @MainActor func testDeleteWholeScanDirectlyFromScanPage() async throws {
+        guard ProcessInfo.processInfo.environment["REMINDME_RUN_UI_TESTS"] == "1" else { throw XCTSkip("Use ios/scripts/test-local.py with the local test server") }
+        let profile = try await fixtureAPI("/api/auth/me")
+        guard profile["id"] as? String == ProcessInfo.processInfo.environment["REMINDME_EXPECT_TEST_PROFILE"] else { XCTFail("Wrong test profile"); return }
+        let fixture = try await fixtureAPI("/api/bins", method: "POST", body: ["name": "扫描删除验收", "locationId": profile["activeLocationId"]!])
+        let placeID = try XCTUnwrap(fixture["id"] as? String); fixtureID = placeID
+        for photoCount in [2, 1] {
+            let captureID = UUID().uuidString.lowercased(); captureIDs.append(captureID)
+            _ = try await fixtureAPI("/api/captures", method: "POST", body: ["id": captureID, "bin_id": placeID, "source": "web-instant"])
+            for index in 0..<photoCount {
+                let png = UIGraphicsImageRenderer(size: CGSize(width: 20, height: 20)).pngData { context in
+                    (index == 0 ? UIColor.blue : UIColor.red).setFill(); context.fill(CGRect(x: 0, y: 0, width: 20, height: 20))
+                }
+                let hash = SHA256.hash(data: png).map { String(format: "%02x", $0) }.joined()
+                let photoID = UUID().uuidString.lowercased()
+                _ = try await fixtureAPI("/api/captures/\(captureID)/photos/\(photoID)", method: "PUT", rawBody: png, headers: ["Content-Type": "image/png", "X-Photo-SHA256": hash, "X-Photo-Size": String(png.count)])
+            }
+        }
+        let app = XCUIApplication()
+        app.launchEnvironment["REMINDME_TEST_URL"] = "http://127.0.0.1:1453"
+        app.launchArguments += ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
+        app.launch()
+        let target = app.buttons["scan.delete.\(captureIDs[0])"]
+        let other = app.buttons["scan.delete.\(captureIDs[1])"]
+        XCTAssertTrue(target.waitForExistence(timeout: 20)); XCTAssertTrue(other.exists)
+        let before = XCTAttachment(screenshot: app.screenshot()); before.name = "扫描页直接删除整次扫描"; before.lifetime = .keepAlways; add(before)
+        target.tap()
+        XCTAssertTrue(expectationForDisappearance(target))
+        XCTAssertTrue(other.exists)
+        let history = try await fixtureAPI("/api/captures/history?bin_id=\(placeID)")
+        let entries = try XCTUnwrap(history["photos"] as? [[String: Any]])
+        XCTAssertFalse(entries.contains { $0["capture_id"] as? String == captureIDs[0] })
+        XCTAssertEqual(entries.filter { $0["capture_id"] as? String == captureIDs[1] }.count, 1)
+        let deleted = try await fixtureAPI("/api/captures/\(captureIDs[0])")
+        XCTAssertEqual(deleted["state"] as? String, "cancelled")
+        let after = XCTAttachment(screenshot: app.screenshot()); after.name = "删除整组后保留其他扫描"; after.lifetime = .keepAlways; add(after)
+        app.terminate(); app.launch()
+        XCTAssertTrue(other.waitForExistence(timeout: 20)); XCTAssertFalse(target.exists)
+    }
+    @MainActor private func expectationForDisappearance(_ element: XCUIElement) -> Bool {
+        XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: element)], timeout: 10) == .completed
     }
     @MainActor func testScanFindHistoryAndNoLogin() async throws {
         guard ProcessInfo.processInfo.environment["REMINDME_RUN_UI_TESTS"] == "1" else { throw XCTSkip("Use ios/scripts/test-local.py with the local test server") }

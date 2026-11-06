@@ -161,4 +161,11 @@ struct UndoRecord: Identifiable {
         queue.hideDeletedHistory(photo)
         await refresh()
     }
+    func deleteScan(_ photo: HistoryPhoto) async throws {
+        try await api.cancel(photo.capture_id, placeID: photo.bin_id)
+        for entry in history where entry.capture_id == photo.capture_id { removedPhotoIDs.insert(entry.id) }
+        history.removeAll { $0.capture_id == photo.capture_id }
+        queue.hideDeletedHistory(photo)
+        await refresh()
+    }
 }
