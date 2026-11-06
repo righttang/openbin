@@ -47,8 +47,11 @@ struct PlacesView: View {
                     Task { do { try await store.rename(place, to: editName); editing = nil } catch { self.error = error.localizedDescription } }
                 }
             }
-            .confirmationDialog("删除这个地点及其中的物品记录？删除后可撤销。", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible) {
-                Button("删除地点", role: .destructive) { if let place = deleting { Task { await store.deletePlace(place) } }; deleting = nil }
+            .alert("删除地点？", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), presenting: deleting) { place in
+                Button("确认删除", role: .destructive) { Task { await store.deletePlace(place) }; deleting = nil }
+                Button("保留", role: .cancel) { deleting = nil }
+            } message: { place in
+                Text("将删除“\(place.name)”及其中的物品记录，删除后可以撤销。")
             }
     }
 }
@@ -120,8 +123,8 @@ struct PhotoDetailView: View {
             if let error { Text(error).foregroundStyle(.red) }
             Button(wholeScan ? "删除整次扫描" : "删除这张照片记录", role: .destructive) { confirm = true }.disabled(deleting)
         }.listStyle(.plain).navigationTitle("识别结果").navigationBarTitleDisplayMode(.inline)
-            .confirmationDialog(wholeScan ? "删除整次扫描的照片及其独有识别结果？其他扫描中的物品会保留，此操作不能撤销。" : "删除照片及其独有识别结果？其他照片中的物品会保留，此操作不能撤销。", isPresented: $confirm, titleVisibility: .visible) {
-                Button(wholeScan ? "删除整次扫描" : "删除照片记录", role: .destructive) {
+            .alert(wholeScan ? "删除整次扫描？" : "删除照片记录？", isPresented: $confirm) {
+                Button("确认删除", role: .destructive) {
                     deleting = true
                     Task {
                         do {
@@ -132,6 +135,9 @@ struct PhotoDetailView: View {
                         deleting = false
                     }
                 }
+                Button("保留", role: .cancel) { }
+            } message: {
+                Text(wholeScan ? "本次扫描的所有照片及其独有识别结果都会删除，其他扫描中的物品会保留。此操作不能撤销。" : "这张照片及其独有识别结果会删除，其他照片中的物品会保留。此操作不能撤销。")
             }
             .task {
                 while !Task.isCancelled && ["uploading", "queued", "processing"].contains(current.state) {

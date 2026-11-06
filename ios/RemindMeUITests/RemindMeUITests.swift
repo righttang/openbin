@@ -3,6 +3,7 @@ import CryptoKit
 import UIKit
 
 final class RemindMeUITests: XCTestCase {
+    override func setUpWithError() throws { continueAfterFailure = false }
     private var csrf = ""
     private var fixtureID: String?
     private var captureIDs: [String] = []
@@ -53,6 +54,14 @@ final class RemindMeUITests: XCTestCase {
         XCTAssertTrue(target.waitForExistence(timeout: 20)); XCTAssertTrue(other.exists)
         let before = XCTAttachment(screenshot: app.screenshot()); before.name = "扫描页直接删除整次扫描"; before.lifetime = .keepAlways; add(before)
         target.tap()
+        XCTAssertTrue(app.buttons["确认删除"].waitForExistence(timeout: 5))
+        let confirmation = XCTAttachment(screenshot: app.screenshot()); confirmation.name = "删除前确认"; confirmation.lifetime = .keepAlways; add(confirmation)
+        app.buttons["保留"].tap()
+        XCTAssertTrue(target.exists)
+        let retained = try await fixtureAPI("/api/captures/history?bin_id=\(placeID)")
+        XCTAssertEqual((retained["photos"] as? [[String: Any]])?.filter { $0["capture_id"] as? String == captureIDs[0] }.count, 2)
+        target.tap()
+        app.buttons["确认删除"].tap()
         XCTAssertTrue(expectationForDisappearance(target))
         XCTAssertTrue(other.exists)
         let history = try await fixtureAPI("/api/captures/history?bin_id=\(placeID)")
@@ -90,10 +99,20 @@ final class RemindMeUITests: XCTestCase {
         app.searchFields.firstMatch.tap(); app.searchFields.firstMatch.typeText(itemName)
         let result = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", itemName)).firstMatch
         XCTAssertTrue(result.waitForExistence(timeout: 15))
+        result.swipeLeft()
+        app.buttons["删除"].tap()
+        XCTAssertTrue(app.buttons["确认删除"].waitForExistence(timeout: 5))
+        app.buttons["保留"].tap()
+        XCTAssertTrue(result.exists)
         result.tap()
         XCTAssertTrue(app.buttons["删除物品"].waitForExistence(timeout: 10))
         let detail = XCTAttachment(screenshot: app.screenshot()); detail.name = "物品详情"; detail.lifetime = .keepAlways; add(detail)
         app.buttons["删除物品"].tap()
+        XCTAssertTrue(app.buttons["确认删除"].waitForExistence(timeout: 5))
+        app.buttons["保留"].tap()
+        XCTAssertFalse(app.buttons["撤销"].exists)
+        app.buttons["删除物品"].tap()
+        app.buttons["确认删除"].tap()
         XCTAssertTrue(app.buttons["撤销"].waitForExistence(timeout: 10))
         app.buttons["撤销"].tap()
         XCTAssertTrue(result.waitForExistence(timeout: 15))

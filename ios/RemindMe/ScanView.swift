@@ -12,6 +12,7 @@ struct ScanView: View {
     @State private var galleryPresented = false
     @State private var importing = false
     @State private var deletingScans: Set<String> = []
+    @State private var removalTarget: String?
     var visibleDrafts: [PhotoDraft] { queue.drafts.filter { $0.state != "cancelled" }.prefix(12).map { $0 } }
     var otherHistory: [HistoryPhoto] {
         var captures = Set(queue.drafts.map(\.id))
@@ -68,7 +69,7 @@ struct ScanView: View {
                                 }
                             }.buttonStyle(.plain).disabled(!store.history.contains(where: { $0.capture_id == draft.id }))
                             if draft.error != nil || draft.state == "expired" { Button { queue.retry(draft.id) } label: { Image(systemName: "arrow.clockwise").frame(width: 44, height: 44) }.accessibilityLabel("重试照片") }
-                            Button(role: .destructive) { queue.cancel(draft.id) } label: {
+                            Button(role: .destructive) { removalTarget = draft.id } label: {
                                 Label(draft.pending ? "取消" : "删除", systemImage: draft.pending ? "xmark" : "trash")
                                     .font(.subheadline).frame(minHeight: 44)
                             }.disabled(draft.cancelRequested).accessibilityLabel("\(draft.pending ? "取消" : "删除")\(draft.place.name)的整次扫描").accessibilityIdentifier("scan.delete.\(draft.id)")
@@ -86,7 +87,7 @@ struct ScanView: View {
                                     Spacer(minLength: 0)
                                 }.foregroundStyle(.primary)
                             }.buttonStyle(.plain)
-                            Button(role: .destructive) { deleteScan(photo) } label: {
+                            Button(role: .destructive) { removalTarget = photo.capture_id } label: {
                                 if deletingScans.contains(photo.capture_id) { ProgressView().frame(minWidth: 44, minHeight: 44) }
                                 else { Label("删除", systemImage: "trash").font(.subheadline).frame(minHeight: 44) }
                             }.disabled(deletingScans.contains(photo.capture_id)).accessibilityLabel("删除\(photo.bin_name)的整次扫描").accessibilityIdentifier("scan.delete.\(photo.capture_id)")
@@ -95,6 +96,15 @@ struct ScanView: View {
                 }
             }.padding(20)
         }.navigationTitle("扫描").refreshable { await store.activate() }
+            .alert("删除整次扫描？", isPresented: Binding(get: { removalTarget != nil }, set: { if !$0 { removalTarget = nil } }), presenting: removalTarget) { id in
+                Button("确认删除", role: .destructive) {
+                    if queue.drafts.contains(where: { $0.id == id }) { queue.cancel(id) }
+                    else if let photo = store.history.first(where: { $0.capture_id == id }) { deleteScan(photo) }
+                }
+                Button("保留", role: .cancel) { }
+            } message: { _ in
+                Text("本次扫描的所有照片及其独有识别结果都会删除，其他扫描中的物品会保留。")
+            }
             .fullScreenCover(item: $cameraPlace) { place in CameraScreen(queue: queue, place: place) }
             .sheet(item: $selectedPhoto) { photo in NavigationStack { PhotoDetailView(photo: photo, wholeScan: true).toolbar { ToolbarItem(placement: .topBarTrailing) { Button("完成") { selectedPhoto = nil } } } } }
             .photosPicker(isPresented: $galleryPresented, selection: $pickerItems, maxSelectionCount: 10, matching: .images)

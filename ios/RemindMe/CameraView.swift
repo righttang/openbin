@@ -125,6 +125,7 @@ struct CameraScreen: View {
 struct CameraStrip: View {
     @ObservedObject var queue: CaptureQueue
     let place: Place
+    @State private var removalTarget: String?
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 12) {
@@ -132,12 +133,18 @@ struct CameraStrip: View {
                     VStack(spacing: 5) {
                         ZStack(alignment: .topTrailing) {
                             LocalThumbnail(url: queue.thumbnailURL(draft.id)).frame(width: 72, height: 72).clipShape(RoundedRectangle(cornerRadius: 12))
-                            Button { queue.cancel(draft.id) } label: { Image(systemName: "xmark.circle.fill").font(.title3).symbolRenderingMode(.palette).foregroundStyle(.white, .black.opacity(0.7)).frame(width: 44, height: 44) }.accessibilityLabel("取消照片\(draft.id)").disabled(draft.cancelRequested)
+                            Button { removalTarget = draft.id } label: { Image(systemName: "xmark.circle.fill").font(.title3).symbolRenderingMode(.palette).foregroundStyle(.white, .black.opacity(0.7)).frame(width: 44, height: 44) }.accessibilityLabel("取消照片\(draft.id)").disabled(draft.cancelRequested)
                         }
                         Text(draft.label).font(.caption2)
                     }
                 }
             }.padding(.horizontal)
         }.frame(height: 102)
+            .alert("取消并删除这次扫描？", isPresented: Binding(get: { removalTarget != nil }, set: { if !$0 { removalTarget = nil } }), presenting: removalTarget) { id in
+                Button("确认删除", role: .destructive) { queue.cancel(id) }
+                Button("保留", role: .cancel) { }
+            } message: { _ in
+                Text("这次拍摄的照片及其独有识别结果会删除，可以继续拍下一张。")
+            }
     }
 }

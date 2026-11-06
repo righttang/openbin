@@ -7,6 +7,7 @@ struct FindView: View {
     @State private var results: [InventoryItem] = []
     @State private var loading = false
     @State private var error: String?
+    @State private var removalTarget: InventoryItem?
     var body: some View {
         List {
             ConnectionNote().listRowSeparator(.hidden)
@@ -22,14 +23,20 @@ struct FindView: View {
                 }
                 ForEach(results.filter { !store.deletedItemIDs.contains($0.id) }) { item in
                     NavigationLink(value: item) { ItemRow(item: item) }
-                        .swipeActions(allowsFullSwipe: false) { Button(role: .destructive) { Task { await store.deleteItem(item) } } label: { Label("删除", systemImage: "trash") } }
-                        .contextMenu { Button("删除物品", systemImage: "trash", role: .destructive) { Task { await store.deleteItem(item) } } }
+                        .swipeActions(allowsFullSwipe: false) { Button { removalTarget = item } label: { Label("删除", systemImage: "trash") }.tint(.red) }
+                        .contextMenu { Button("删除物品", systemImage: "trash", role: .destructive) { removalTarget = item } }
                 }
             } header: { Text(query.isEmpty && place.isEmpty ? "最近看到的物品" : "找到 \(results.count) 类物品") }
               footer: { Text("点开看照片与地点 · 左滑可删除\(results.count >= 200 ? " · 当前显示最近 200 条，可输入关键词继续查找" : "")") }
         }.listStyle(.plain).navigationTitle("查找")
             .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "名称、颜色、用途，例如白色充电线")
             .navigationDestination(for: InventoryItem.self) { ItemDetailView(item: $0) }
+            .alert("删除物品？", isPresented: Binding(get: { removalTarget != nil }, set: { if !$0 { removalTarget = nil } }), presenting: removalTarget) { item in
+                Button("确认删除", role: .destructive) { Task { await store.deleteItem(item) } }
+                Button("保留", role: .cancel) { }
+            } message: { item in
+                Text("将删除“\(item.name)”，删除后可以撤销。")
+            }
             .task(id: "\(query)|\(place)|\(store.revision)") {
                 loading = true
                 do {
@@ -65,6 +72,7 @@ struct ItemDetailView: View {
     let item: InventoryItem
     var canDelete = true
     @State private var deleting = false
+    @State private var confirmDeletion = false
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
@@ -79,12 +87,19 @@ struct ItemDetailView: View {
                 if !item.aliases.isEmpty { Text(item.aliases.joined(separator: " · ")).font(.footnote).foregroundStyle(.secondary) }
                 Text("后续照片里没出现，也会保留这里的最后记录。").font(.footnote).foregroundStyle(.secondary)
                 if canDelete {
-                    Button("删除物品", role: .destructive) {
-                        deleting = true
-                        Task { await store.deleteItem(item); deleting = false; if store.deletedItemIDs.contains(item.id) { dismiss() } }
-                    }.frame(maxWidth: .infinity).padding(.vertical).disabled(deleting)
+                    Button("删除物品", role: .destructive) { confirmDeletion = true }
+                        .frame(maxWidth: .infinity).padding(.vertical).disabled(deleting)
                 }
             }.padding(20)
         }.navigationTitle(item.name).navigationBarTitleDisplayMode(.inline)
+            .alert("删除物品？", isPresented: $confirmDeletion) {
+                Button("确认删除", role: .destructive) {
+                    deleting = true
+                    Task { await store.deleteItem(item); deleting = false; if store.deletedItemIDs.contains(item.id) { dismiss() } }
+                }
+                Button("保留", role: .cancel) { }
+            } message: {
+                Text("将删除“\(item.name)”，删除后可以撤销。")
+            }
     }
 }
