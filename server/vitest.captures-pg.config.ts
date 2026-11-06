@@ -2,7 +2,7 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    include: ['src/lib/captures/postgres*.integration.test.ts'],
+    include: ['src/lib/captures/postgres*.integration.test.ts', 'src/lib/captures/cancellation.test.ts'],
     fileParallelism: false,
     testTimeout: 20_000,
     hookTimeout: 30_000,

@@ -6,7 +6,7 @@ import sharp from 'sharp';
 import { query, type TxQueryFn } from '../../db.js';
 import { requireCreatorOrAdmin, requireMemberOrAbove, verifyBinAccess } from '../binAccess.js';
 import { ConflictError, HttpError, NotFoundError, ValidationError } from '../httpErrors.js';
-import { captureDirectory, holdCapture } from './cleanup.js';
+import { captureDirectory, cleanupCapture, holdCapture, registerCaptureAbort } from './cleanup.js';
 import { captureConfig, supportedMimeTypes } from './config.js';
 import { withCaptureTransaction } from './database.js';
 import { storePhotoPreview } from './history.js';
@@ -50,7 +50,7 @@ export async function captureStatus(id: string, execute: TxQueryFn = query) {
   }));
   const job = (await execute('SELECT state, attempts, error_category, next_attempt_at FROM analysis_jobs WHERE capture_id = $1 ORDER BY analysis_version DESC LIMIT 1', [id])).rows[0] as Record<string, unknown> | undefined;
   const { manifest_json: _manifest, ...safe } = batch;
-  return { ...safe, photos, error_category: job?.error_category ?? null, job: job ?? null };
+  return { ...safe, state: batch.cancelled_at ? 'cancelled' as const : batch.state, photos, error_category: job?.error_category ?? null, job: job ?? null };
 }
 
 export async function createCapture(input: Record<string, unknown>, userId: string) {
@@ -67,8 +67,14 @@ export async function createCapture(input: Record<string, unknown>, userId: stri
   const capturedAt = input.captured_at ?? new Date().toISOString();
   if (typeof capturedAt !== 'string' || !Number.isFinite(Date.parse(capturedAt))) throw new ValidationError('captured_at is invalid');
   await withCaptureTransaction(async (execute) => {
+    const cancelled = (await execute<{ created_by: string }>('SELECT created_by FROM capture_cancellations WHERE id=$1', [input.id])).rows[0];
+    if (cancelled) {
+      if (cancelled.created_by !== userId) throw new NotFoundError('Capture not found');
+      throw new HttpError(410, 'CAPTURE_CANCELLED', 'This capture was cancelled. Start a new capture.');
+    }
     const existing = (await execute('SELECT * FROM capture_batches WHERE id = $1', [input.id])).rows[0] as CaptureBatch | undefined;
     if (existing) {
+      assertNotCancelled(existing);
       if (existing.created_by !== userId) throw new NotFoundError('Capture not found');
       if (existing.bin_id !== input.bin_id || existing.source !== source
         || (input.device_id != null && existing.device_id !== input.device_id)
@@ -126,14 +132,19 @@ export async function scratchUsage(execute: TxQueryFn = query): Promise<number> 
   return bytes;
 }
 
+export function assertNotCancelled(batch: Pick<CaptureBatch, 'cancelled_at'>): void {
+  if (batch.cancelled_at) throw new HttpError(410, 'CAPTURE_CANCELLED', 'This capture was cancelled. Start a new capture.');
+}
+
 function assertUploadable(batch: CaptureBatch) {
+  assertNotCancelled(batch);
   if (batch.state !== 'uploading') throw new ConflictError('This capture is sealed');
   if (batch.expires_at <= new Date().toISOString()) throw new HttpError(410, 'CAPTURE_EXPIRED', 'Capture expired. Start a new capture.');
 }
 
 export async function receivePhoto(req: Request, captureId: string, photoId: string, userId: string) {
   requireId(photoId, 'photoId');
-  await authorizeCapture(captureId, userId, true);
+  assertNotCancelled(await authorizeCapture(captureId, userId, true));
   const sha256 = req.header('X-Photo-SHA256')?.toLowerCase();
   const size = Number(req.header('Content-Length') ?? req.header('X-Photo-Size'));
   const declaredSize = req.header('X-Photo-Size');
@@ -148,13 +159,17 @@ export async function receivePhoto(req: Request, captureId: string, photoId: str
   if (uploadLocks.has(lock)) throw new ConflictError('This photo is already uploading. Retry shortly.');
   uploadLocks.add(lock);
   const release = holdCapture(captureId);
+  const unregister = registerCaptureAbort(captureId, () => req.destroy());
   try {
     const execute = query;
     let photo: CapturePhoto;
+    assertNotCancelled(await getCapture(captureId, execute));
     const existing = (await execute('SELECT * FROM capture_photos WHERE capture_id = $1 AND id = $2', [captureId, photoId])).rows[0] as CapturePhoto | undefined;
     if (existing) {
       if (existing.sha256 !== sha256 || existing.size !== size || existing.mime_type !== mimeType) throw new ConflictError('Photo ID already has different content');
-      if (existing.received_at && ((await getCapture(captureId, execute)).state !== 'uploading' || fs.existsSync(existing.storage_path))) {
+      const current = await getCapture(captureId, execute);
+      assertNotCancelled(current);
+      if (existing.received_at && (current.state !== 'uploading' || fs.existsSync(existing.storage_path))) {
         return { id: photoId, sha256, size, received_at: existing.received_at };
       }
       if (existing.received_at) await execute('UPDATE capture_photos SET received_at = NULL WHERE capture_id = $1 AND id = $2', [captureId, photoId]);
@@ -228,6 +243,7 @@ export async function receivePhoto(req: Request, captureId: string, photoId: str
       try { preview = await makePhotoPreview(photo.storage_path); } catch { /* The original remains available for recognition. */ }
       const receivedAt = new Date().toISOString();
       await withCaptureTransaction(async (execute) => {
+        assertUploadable(await getCapture(captureId, execute));
         await storePhotoPreview(captureId, photoId, preview, execute);
         await execute('UPDATE capture_photos SET received_at = $1 WHERE capture_id = $2 AND id = $3', [receivedAt, captureId, photoId]);
       });
@@ -246,8 +262,10 @@ export async function receivePhoto(req: Request, captureId: string, photoId: str
       req.setTimeout(0);
     }
   } finally {
+    unregister();
     release();
     uploadLocks.delete(lock);
+    await cleanupCapture(captureId).catch(() => {});
   }
 }
 
@@ -274,6 +292,7 @@ export async function completeCapture(id: string, input: unknown, userId: string
   const serialized = JSON.stringify(manifest);
   await withCaptureTransaction(async (execute) => {
     const batch = await getCapture(id, execute);
+    assertNotCancelled(batch);
     if (batch.manifest_json !== null) {
       if (batch.manifest_json !== serialized) throw new ConflictError('The sealed photo manifest cannot change');
       return;

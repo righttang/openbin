@@ -14,6 +14,7 @@ export interface CaptureBatch {
   expires_at: string;
   created_at: string;
   updated_at: string;
+  cancelled_at: string | null;
   cleanup_completed_at: string | null;
 }
 export interface CapturePhoto {

@@ -69,4 +69,7 @@ it('starts from an empty PostgreSQL schema and completes a photo capture without
   expect(secondDevice.body.id).toBe(me.body.id);
   expect(secondDevice.body.activeLocationId).toBe(me.body.activeLocationId);
   expect((await request(app).get('/api/captures/inventory')).body.items).toHaveLength(1);
+  expect((await request(app).post(`/api/captures/${captureId}/cancel`).send({ bin_id: created.body.id })).status).toBe(403);
+  expect((await request(app).post(`/api/captures/${captureId}/cancel`).set(headers).send({ bin_id: created.body.id })).body.state).toBe('cancelled');
+  expect((await request(app).get('/api/captures/inventory')).body.items).toHaveLength(0);
 });

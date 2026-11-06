@@ -40,6 +40,23 @@ export const captureClient: CaptureClient = {
 
 export const getCaptureConfig = () => apiFetch<CaptureConfig>('/api/captures/config');
 
+export interface AutomaticCaptureClient extends CaptureClient {
+  create(draft: CaptureDraft): Promise<Capture>;
+  cancel(id: string, binId: string): Promise<Capture>;
+  list(): Promise<Capture[]>;
+}
+
+export const automaticCaptureClient: AutomaticCaptureClient = {
+  ...captureClient,
+  create: (draft) => apiFetch('/api/captures', { method: 'POST', body: {
+    id: draft.id, bin_id: draft.binId, captured_at: draft.createdAt, source: 'web-instant',
+  } }),
+  cancel: (id, binId) => apiFetch(`/api/captures/${encodeURIComponent(id)}/cancel`, {
+    method: 'POST', body: { bin_id: binId },
+  }),
+  list: async () => (await apiFetch<{ captures: Capture[] }>('/api/captures')).captures,
+};
+
 export function hasAcceptedBatch(capture: Capture): boolean {
   return ['queued', 'processing', 'applied', 'superseded', 'failed'].includes(capture.state);
 }

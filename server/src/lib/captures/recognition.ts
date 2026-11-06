@@ -63,7 +63,7 @@ export type CaptureErrorCategory =
   | 'model_not_configured' | 'model_timeout' | 'model_unavailable'
   | 'model_rejected' | 'invalid_response' | 'unusable_capture'
   | 'input_missing' | 'input_invalid' | 'revision_conflict'
-  | 'access_revoked' | 'worker_interrupted' | 'internal_error';
+  | 'capture_cancelled' | 'access_revoked' | 'worker_interrupted' | 'internal_error';
 
 /** Errors deliberately contain only fixed categories, never provider bodies or image bytes. */
 export class CaptureProcessingError extends Error {

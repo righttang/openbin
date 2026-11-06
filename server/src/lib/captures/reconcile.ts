@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { query, type TxQueryFn } from '../../db.js';
 import { withCaptureTransaction } from './database.js';
-import { canStoreHistoryBytes, captureTimestampMs } from './history.js';
+import { baselineCaptureSequence, canStoreHistoryBytes, captureTimestampMs, sameCaptureContent, saveManualCaptureBaseline } from './history.js';
 import type { ObservationMedia } from './media.js';
 import type { ExistingCaptureItem, RecognitionResult } from './recognition.js';
 import { CAPTURE_PROMPT_VERSION, CaptureProcessingError, normalizeItemName } from './recognition.js';
@@ -12,6 +12,7 @@ export interface ClaimedCapture {
   binId: string;
   binName: string;
   createdBy: string;
+  source: string;
   sequence: number;
   capturedAt: string;
   revision: number;
@@ -36,6 +37,8 @@ export async function readExistingCaptureItems(binId: string, execute: TxQueryFn
 
 /** Check before inference and again at commit, since permissions can change while the model runs. */
 export async function assertCaptureWritable(claim: ClaimedCapture, execute: TxQueryFn = query): Promise<void> {
+  const batch = (await execute<{ cancelled_at: string | null }>('SELECT cancelled_at FROM capture_batches WHERE id=$1', [claim.captureId])).rows[0];
+  if (batch?.cancelled_at) throw new CaptureProcessingError('capture_cancelled', false);
   const access = (await execute(`SELECT b.created_by,lm.role FROM bins b
     JOIN users u ON u.id=$1 AND u.deleted_at IS NULL AND u.suspended_at IS NULL
     JOIN location_members lm ON lm.location_id=b.location_id AND lm.user_id=u.id
@@ -64,7 +67,8 @@ export async function commitRecognition(
     const activePhotos = new Set(((await execute(`SELECT photo_id FROM capture_photo_history
       WHERE capture_id=$1 AND dismissed_at IS NULL`, [claim.captureId])).rows as { photo_id: string }[]).map((p) => p.photo_id));
     const current = (await execute('SELECT revision,latest_applied_sequence FROM bin_capture_state WHERE bin_id=$1', [claim.binId])).rows[0] as { revision: number; latest_applied_sequence: number };
-    const superseded = claim.sequence <= current.latest_applied_sequence;
+    const instant = claim.source === 'web-instant';
+    const superseded = !instant && claim.sequence <= current.latest_applied_sequence;
     const applyInventory = !superseded && activePhotos.size > 0;
     if (applyInventory && current.revision !== claim.revision) throw new CaptureProcessingError('revision_conflict');
 
@@ -73,7 +77,7 @@ export async function commitRecognition(
       && item.existing_item_id && !existing.has(item.existing_item_id))) {
       throw new CaptureProcessingError('revision_conflict');
     }
-    if (applyInventory) {
+    if (applyInventory && !instant) {
       await execute(`UPDATE bin_items SET observation_state='not_seen_in_latest_capture'
         WHERE bin_id=$1 AND deleted_at IS NULL`, [claim.binId]);
     }
@@ -86,18 +90,36 @@ export async function commitRecognition(
       const aliases = [...new Set([
         ...item.aliases, ...(old?.aliases ?? []), ...(old && old.name !== item.name ? [old.name] : []),
       ].filter(Boolean))].slice(0, 12);
-      if (applyInventory) {
+      // An older instant photo can contribute its own evidence and new items,
+      // but must not overwrite a newer photo's fields for a shared item.
+      let existingSequence = 0;
+      if (instant && old) {
+        const currentItem = (await execute<{
+          name: string; description: string; quantity: number | null; aliases_json: string;
+          updated_at: string; sequence: number | null; snapshot_json: string | null;
+        }>(`SELECT i.name,i.description,i.quantity,i.aliases_json,i.updated_at,c.sequence,bl.snapshot_json
+          FROM bin_items i LEFT JOIN capture_batches c ON c.id=i.last_seen_batch_id
+          LEFT JOIN capture_item_baselines bl ON bl.item_id=i.id WHERE i.id=$1`, [old.id])).rows[0];
+        existingSequence = currentItem?.sequence ?? 0;
+        if (currentItem?.snapshot_json) {
+          let baseline: Record<string, unknown> | undefined;
+          try { baseline = JSON.parse(currentItem.snapshot_json); } catch { /* Ignore invalid legacy metadata. */ }
+          if (baseline?.updated_at === currentItem.updated_at && sameCaptureContent(currentItem, baseline)) {
+            existingSequence = Math.max(existingSequence, await baselineCaptureSequence(baseline, execute));
+          }
+        }
+      }
+      if (applyInventory && existingSequence <= claim.sequence) {
         if (old) {
           const original = (await execute(`SELECT name,quantity,normalized_name,aliases_json,description,
             last_seen_batch_id,last_seen_at,observation_state,updated_at,capture_created FROM bin_items
-            WHERE id=$1`, [old.id])).rows[0] as { updated_at: string; last_seen_batch_id: string | null; capture_created: number };
-          const prior = (await execute(`SELECT created_at FROM observations WHERE item_id=$1 AND capture_id=$2
-            ORDER BY created_at DESC LIMIT 1`, [old.id, original.last_seen_batch_id])).rows[0] as { created_at: string } | undefined;
-          const manuallyEdited = !prior || captureTimestampMs(original.updated_at) > captureTimestampMs(prior.created_at);
+            WHERE id=$1`, [old.id])).rows[0] as { name: string; description: string; quantity: number | null; aliases_json: string; updated_at: string; last_seen_batch_id: string | null; capture_created: number };
+          const prior = (await execute(`SELECT name,description,quantity,aliases_json,created_at FROM observations WHERE item_id=$1 AND capture_id=$2
+            ORDER BY created_at DESC LIMIT 1`, [old.id, original.last_seen_batch_id])).rows[0] as { name: string; description: string; quantity: number | null; aliases_json: string; created_at: string } | undefined;
+          const manuallyEdited = !prior || !sameCaptureContent(original, prior) || captureTimestampMs(original.updated_at) > captureTimestampMs(prior.created_at);
           if (!original.capture_created || manuallyEdited) {
             if (manuallyEdited) {
-              await execute(`INSERT INTO capture_item_baselines (item_id,snapshot_json) VALUES ($1,$2)
-                ON CONFLICT(item_id) DO UPDATE SET snapshot_json=excluded.snapshot_json`, [old.id, JSON.stringify(original)]);
+              await saveManualCaptureBaseline(old.id, { ...original }, execute);
               // A later manual edit gives an automatically-created item its own provenance.
               await execute('UPDATE bin_items SET capture_created=0 WHERE id=$1', [old.id]);
             } else {
@@ -159,7 +181,7 @@ export async function commitRecognition(
     }
     const state = superseded ? 'superseded' : 'applied';
     if (applyInventory) {
-      await execute(`UPDATE bin_capture_state SET revision=revision+1,latest_applied_sequence=$1 WHERE bin_id=$2`, [claim.sequence, claim.binId]);
+      await execute(`UPDATE bin_capture_state SET revision=revision+1,latest_applied_sequence=$1 WHERE bin_id=$2`, [Math.max(claim.sequence, current.latest_applied_sequence), claim.binId]);
       await execute('UPDATE bins SET updated_at=$1 WHERE id=$2', [timestamp, claim.binId]);
     }
     await execute(`UPDATE analysis_jobs SET state=$1,lease_until=NULL,lease_token=NULL,error_category=NULL,

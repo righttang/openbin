@@ -3,7 +3,7 @@ import type { CaptureDraft } from './types';
 const DB_NAME = 'remindme-capture-queue';
 const SHADOW_KEY = 'remindme-capture-manifests';
 const MAX_LOCAL_BYTES = 100 * 1024 * 1024;
-const MAX_DRAFTS = 10;
+const MAX_DRAFTS = 40;
 let lastSavedAt = 0;
 
 function openQueue(): Promise<IDBDatabase> {
@@ -23,9 +23,10 @@ function shadows(): CaptureDraft[] {
 }
 
 function saveShadow(draft: CaptureDraft) {
-  const all = shadows().filter((entry) => entry.id !== draft.id && Date.parse(entry.expiresAt) > Date.now());
+  const all = shadows().filter((entry) => entry.id !== draft.id);
   all.push({ ...draft, photos: draft.photos.map(({ blob: _blob, ...photo }) => photo) });
-  localStorage.setItem(SHADOW_KEY, JSON.stringify(all.slice(-MAX_DRAFTS)));
+  // Never evict another pending manifest or cancellation intent.
+  localStorage.setItem(SHADOW_KEY, JSON.stringify(all));
 }
 
 async function readAll(): Promise<CaptureDraft[]> {
@@ -42,7 +43,8 @@ export async function saveDraft(draft: CaptureDraft): Promise<boolean> {
   lastSavedAt = Math.max(Date.now(), lastSavedAt + 1);
   draft = { ...draft, updatedAt: lastSavedAt };
   // A small metadata shadow can still identify missing files after IndexedDB eviction.
-  try { saveShadow(draft); } catch { /* IndexedDB may still be available. */ }
+  let shadowSaved = false;
+  try { saveShadow(draft); shadowSaved = true; } catch { /* IndexedDB may still be available. */ }
   try {
     const db = await openQueue();
     await new Promise<void>((resolve, reject) => {
@@ -52,12 +54,11 @@ export async function saveDraft(draft: CaptureDraft): Promise<boolean> {
       let capacityError = false;
       request.onsuccess = () => {
         const all = request.result as CaptureDraft[];
-        const remaining = all.filter((entry) => entry.id !== draft.id && Date.parse(entry.expiresAt) > Date.now());
+        const remaining = all.filter((entry) => entry.id !== draft.id);
         const bytes = [...remaining, draft].reduce((total, entry) => total + entry.photos.reduce((sum, photo) => sum + (photo.blob?.size ?? 0), 0), 0);
-        if (remaining.length >= MAX_DRAFTS || bytes > MAX_LOCAL_BYTES) {
+        if (!draft.cancelRequested && (remaining.filter((entry) => !entry.cancelRequested).length >= MAX_DRAFTS || bytes > MAX_LOCAL_BYTES)) {
           capacityError = true; transaction.abort(); return;
         }
-        for (const entry of all) if (Date.parse(entry.expiresAt) <= Date.now()) store.delete(entry.id);
         store.put(draft);
       };
       transaction.oncomplete = () => { db.close(); resolve(); };
@@ -66,7 +67,7 @@ export async function saveDraft(draft: CaptureDraft): Promise<boolean> {
       };
     });
     return true;
-  } catch { return false; }
+  } catch { return !!draft.cancelRequested && shadowSaved; }
 }
 
 export async function loadDrafts(ownerId: string): Promise<CaptureDraft[]> {
@@ -84,12 +85,8 @@ export async function loadDrafts(ownerId: string): Promise<CaptureDraft[]> {
       } else merged.set(draft.id, draft);
     }
   } catch { /* The metadata shadow provides an explicit missing-file recovery path. */ }
-  for (const [id, draft] of merged) {
-    if (Date.parse(draft.expiresAt) <= Date.now()) {
-      await clearDraft(id);
-      merged.delete(id);
-    }
-  }
+  // A local deadline is not a server acknowledgement. Keep original files even
+  // when registration never reached the server or the browser was offline.
   return [...merged.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 

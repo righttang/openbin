@@ -11,7 +11,7 @@ export interface Capture {
   id: string;
   bin_id: string;
   sequence: number;
-  state: 'uploading' | 'queued' | 'processing' | 'applied' | 'superseded' | 'failed' | 'expired';
+  state: 'uploading' | 'queued' | 'processing' | 'applied' | 'superseded' | 'failed' | 'expired' | 'cancelled';
   captured_at: string;
   received_at: string | null;
   expires_at: string;
@@ -40,6 +40,11 @@ export interface CaptureDraft {
   createdAt: string;
   expiresAt: string;
   sealed: boolean;
+  automatic?: boolean;
+  binName?: string;
+  cancelRequested?: boolean;
+  replacesId?: string;
+  replacesIds?: string[];
   updatedAt?: number;
   photos: LocalPhoto[];
 }

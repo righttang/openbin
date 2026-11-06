@@ -6,6 +6,24 @@ import { withCaptureTransaction } from './database.js';
 import type { CaptureBatch, CapturePhoto } from './types.js';
 
 const active = new Map<string, number>();
+const aborters = new Map<string, Set<() => void>>();
+
+export function registerCaptureAbort(id: string, abort: () => void): () => void {
+  const callbacks = aborters.get(id) ?? new Set<() => void>();
+  callbacks.add(abort);
+  aborters.set(id, callbacks);
+  return () => {
+    callbacks.delete(abort);
+    if (callbacks.size === 0) aborters.delete(id);
+  };
+}
+
+/** Called after the cancellation transaction commits, never during a retry. */
+export function abortCaptureActivity(id: string): void {
+  for (const abort of aborters.get(id) ?? []) {
+    try { abort(); } catch { /* Durable guards still prevent acknowledgement. */ }
+  }
+}
 
 /** Protect readers and uploads from the expiry sweeper until they have stopped. */
 export function holdCapture(id: string): () => void {

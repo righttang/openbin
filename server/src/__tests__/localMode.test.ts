@@ -88,6 +88,10 @@ describe('shared local household without login', () => {
     expect(fromAnotherDevice.status).toBe(200);
     expect(fromAnotherDevice.body.state).toBe('queued');
     expect(getDb().prepare('SELECT COUNT(*) AS n FROM analysis_jobs').get()).toEqual({ n: 1 });
+    expect((await request(app).post(`/api/captures/${id}/cancel`).send({ bin_id: bin.body.id })).status).toBe(403);
+    const cancelled = await request(app).post(`/api/captures/${id}/cancel`)
+      .set('Cookie', cookie).set('X-CSRF-Token', csrf).send({ bin_id: bin.body.id });
+    expect(cancelled.body.state).toBe('cancelled');
   });
 
   it('requires CSRF for local writes even without auth cookies or with a Bearer header', async () => {

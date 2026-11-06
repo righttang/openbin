@@ -1,6 +1,6 @@
 # RemindMe
 
-家中物品查找工具：选一个抽屉、盒子或架子，拍一组照片，后台自动更新物品记录。之后按名称、描述或别名搜索，查看位置、最后看到的时间和数量。
+家中物品查找工具：选一个地点，点拍照直接打开相机；每拍一张便自动上传识别，可以接着拍下一张。之后按名称、描述或别名搜索，查看位置、最后看到的时间和数量。
 
 第一版基于 [OpenBin](https://github.com/akifbayram/openbin/tree/7ffc01a086c8d8c52afcb8db2faed50b93a3d3d5)，基线固定为 `7ffc01a086c8d8c52afcb8db2faed50b93a3d3d5`。界面只提供扫描、查找、地点管理和照片历史四个平级页面，无需登录和注册。[原项目说明](README.upstream.md)、[许可证](LICENSE) 和代码中的版权声明保留；本项目使用自托管社区版本。详细设计见 [PLAN.md](PLAN.md)。
 
@@ -19,7 +19,7 @@ npm run dev:all
 打开 <http://localhost:5173> 即可使用，不需要注册或登录。先添加一个地点，例如“书桌抽屉”，然后拍照。地点是平级列表，不需要创建家庭、区域或多层容器。
 
 - **扫描** `/scan`：选地点、拍照并提交后台识别。
-- **查找** `/find`：按名称、描述或别名搜索，查看地点与物品裁剪图。
+- **查找** `/find`：按名称、描述或别名搜索，查看地点与物品裁剪图，删除不需要的物品并支持撤销。
 - **地点** `/places`：新增、改名和删除地点。
 - **历史** `/history`：按照片查看结果、筛选地点、删除不需要的记录。
 
@@ -73,15 +73,18 @@ MIGRATION_TEST_DATABASE_URL=postgres://openbin_test:openbin_test@127.0.0.1:5433/
 
 ## 拍摄和恢复
 
-1. 选择地点，在线开始新一批拍摄，服务端先分配顺序号。
-2. 添加全景及细节照片，每批最多 20 张，单张上传不超过 5 MiB。
-3. 完成拍摄并上传。上传过程中保持页面打开；Safari 锁屏或退出可能中断尚未完成的上传。
-4. 只有服务器接受完整批次后，页面才显示可以离开。识别在服务端继续，不需要 Apply 或确认。
-5. 后续通过 RemindMe 搜索查看结果。未在新照片里出现的物品保留最后已知位置；未知数量不会被猜成 1。
+1. 选择地点，点“拍照”直接打开系统相机，也可以从相册选择照片。
+2. 每张照片回到页面后自动保存、上传并开始识别，不需要先开始一批或再点提交。
+3. 页面保持可继续拍照，每张照片分别显示上传、识别、完成或失败状态；识别上一张时可以继续下一张。
+4. 拍错了可点该照片的取消。取消会停止排队或尽力中止正在进行的模型请求，撤回这张照片的独有结果；其他照片支持的物品继续保留。离线取消会保留取消意图，联网后重试。
+5. 上传尚未确认时保持页面打开；只有服务器确认收到之后，识别才可独立于页面继续。上传失败可重试，重试使用相同 ID，不重复生成记录。
+6. 查找页可删除单个物品，删除后可撤销。第二张没拍到的物品继续保留最后一次记录，不会因局部照片未出现而自动删除。
+
+新扫描每张照片是独立的 `web-instant` 任务。较早照片因慢上传或重试而晚完成时，其中独有物品仍会加入记录，同一物品较新的识别信息不会被旧照片覆盖。旧版本已保存的多图草稿仍可按原清单恢复。
 
 支持 JPEG、PNG、WebP。照片在浏览器和服务端按方向旋转并缩小；无法解码的 HEIC 请转成 JPEG，或在 iPhone 相机里使用“兼容性最佳”。浏览器通过有容量限制的 IndexedDB 保存待上传照片；重新打开后按原批次和照片 ID 恢复。浏览器清理本地存储时，需要重新选择缺失的照片。
 
-成功或被更新批次取代后，立即删除服务端临时原图。删除失败会重试；上传未完成和最终识别失败的原图默认 1 小时过期。照片历史另保留压缩预览和物品裁剪图，存入数据库（PostgreSQL 或 SQLite），随数据库一起备份；不保存 base64 或模型原始响应。
+成功或取消后，清理服务端临时原图；旧版整批任务被更新批次取代时也会清理。删除失败会重试；上传未完成和最终识别失败的原图默认 1 小时过期。照片历史另保留压缩预览和物品裁剪图，存入数据库（PostgreSQL 或 SQLite），随数据库一起备份；不保存 base64 或模型原始响应。
 
 ### 照片识别历史和详情
 
@@ -101,6 +104,7 @@ MIGRATION_TEST_DATABASE_URL=postgres://openbin_test:openbin_test@127.0.0.1:5433/
 | `POST /api/captures` | `{id, bin_id, source?, device_id?, event_id?, captured_at?}`；先在线注册，返回固定 `sequence` |
 | `PUT /api/captures/:id/photos/:photoId` | 原始图片 body；`Content-Type`、`X-Photo-SHA256`、`X-Photo-Size`；同 ID 同内容可重试 |
 | `POST /api/captures/:id/complete` | `{photos:[{id, sha256, size, order}]}`；所有照片收到后才封存并入队 |
+| `POST /api/captures/:id/cancel` | `{bin_id}`；幂等取消，撤回独有结果；先于创建到达的取消也阻止迟到创建复活 |
 | `GET /api/captures/:id` | 批次 `state`、逐图 `received_at`、任务错误类别、`cleanup_completed_at` |
 | `GET /api/captures?bin_id=…` | 最近批次，返回 `{captures:[…]}` |
 | `GET /api/captures/history?bin_id=…&location_id=…` | 按照片分组的历史、预览链接和识别结果 |
@@ -108,8 +112,10 @@ MIGRATION_TEST_DATABASE_URL=postgres://openbin_test:openbin_test@127.0.0.1:5433/
 | `GET /api/captures/observations/:observationId/photos/:photoId/crop` | 读取物品局部裁剪图 |
 | `DELETE /api/captures/:id/photos/:photoId/history` | 删除该照片记录并撤回独有的识别结果 |
 | `GET /api/captures/inventory?q=…&location_id=…&bin_id=…` | 名称、别名、描述及位置搜索，返回 `{items:[…]}`；筛选参数可选 |
+| `POST /api/items/bulk-delete` | `{ids:[itemId]}`；从查找结果软删除单个物品，保留历史关联 |
+| `POST /api/items/bulk-restore` | `{ids:[itemId]}`；撤销物品软删除 |
 
-批次和照片 ID 使用客户端生成的 UUID。照片校验使用 SHA-256 十六进制，`order` 从 0 连续编号。完成后清单不可改变；网络中断必须复用原 ID。响应状态可能是 `uploading / queued / processing / applied / superseded / failed / expired`；只有退出 `uploading` 且服务器已接受完整批次后，客户端才能清理本地照片。`expired` 的上传未被接受，不可误报成功。
+批次和照片 ID 使用客户端生成的 UUID。照片校验使用 SHA-256 十六进制，`order` 从 0 连续编号。完成后清单不可改变；网络中断必须复用原 ID。响应状态可能是 `uploading / queued / processing / applied / superseded / failed / expired / cancelled`；只有退出 `uploading` 且服务器已接受完整批次后，客户端才能清理本地照片。`expired` 的上传未被接受，不可误报成功；`cancelled` 表示主动取消，不能作为识别成功。
 
 ## 校验
 

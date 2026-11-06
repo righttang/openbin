@@ -1,6 +1,10 @@
 # RemindMe implementation plan
 
-> Current scope (2026-11-06): four flat pages — Scan, Find, Places, History. Scan and Find are the main workflows. Hide the upstream household/area/bin hierarchy and legacy inventory tools. A place is a directly named storage spot; preserve existing IDs and records internally. Migrate the deployed SQLite data, including retained photo previews and crops, to a dedicated database on Tomubuntu’s existing PostgreSQL service. Keep SQLite supported for local use and rollback snapshots.
+> Current scope (2026-11-06): four flat pages — Scan, Find, Places, History. Scan and Find are the main workflows. Hide the upstream household/area/bin hierarchy and legacy inventory tools. A place is a directly named storage spot; preserve existing IDs and records internally. Production runs in a dedicated database on Tomubuntu’s existing PostgreSQL service. Local PostgreSQL is used for testing; SQLite remains supported for compatibility and archived snapshots.
+
+Scope update — instant scanning: the camera button opens the system camera synchronously within the user gesture. Each returned photo becomes an independent `web-instant` capture, is saved and submitted automatically, and can be cancelled while the scanner remains usable for the next photo. Do not require explicit start-batch or finish-upload actions. Persist cancellation intent across offline sessions; server-side cancellation invalidates leases, rejects late uploads/completion, and retracts exclusive evidence. A cancellation arriving before creation leaves an authorized tombstone. Instant captures contribute independently even when processed out of order: preserve newer per-item information while retaining older observations and unique items. Missing objects in a subsequent photo are retained. Find results support item soft-delete with undo.
+
+Production/test separation: Tomubuntu runs the dedicated production PostgreSQL database; local PostgreSQL holds testing data. Future deployments preserve the production records created since its initial reset.
 
 Date: 2026-11-06
 
@@ -173,7 +177,7 @@ Treat original uploaded images as temporary. Retain separately bounded history p
 - Retained preview maximum: 960 px longest side and 256 KiB. Retained crop maximum: 512 px longest side and 128 KiB. Bound total derived image storage (default 512 MiB) and per-batch crop preparation memory (32 MiB). At capacity, retain text results and show missing-image fallback rather than silently evicting older evidence.
 - Deleting a photo history record clears its preview and crops atomically with retracting exclusive observations and updating inventory. Database space becomes reusable; old backup copies are not automatically scrubbed.
 - On deletion failure: persist a cleanup task and retry; a restart must not strand images indefinitely.
-- On model failure, cancellation, or incomplete upload: retain files only for a bounded retry/expiry period, then delete them and keep a small failure record.
+- On explicit cancellation: invalidate the job lease and abort active inference, retract evidence atomically, and clean originals as soon as active uploads/readers release them. On model failure or incomplete upload: retain inputs only for a bounded retry/expiry period, then delete them and keep a small failure record.
 - Run a startup and periodic sweeper for expired batches, orphaned files, and incomplete cleanup.
 - Count uploading, queued, processing, and cleanup-pending files against one shared scratch-space quota, including transformation overhead.
 - When the quota or minimum-free-disk threshold is reached, reject or pause new uploads. Never silently remove active inputs to make room.

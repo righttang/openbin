@@ -24,6 +24,32 @@ interface InventoryRow {
   capture_created: number; updated_at: string; deleted_at: string | null;
 }
 
+type CaptureContent = { name?: unknown; description?: unknown; quantity?: unknown; aliases_json?: unknown };
+
+export function sameCaptureContent(left: CaptureContent, right: CaptureContent): boolean {
+  return left.name === right.name && left.description === right.description
+    && left.quantity === right.quantity && left.aliases_json === right.aliases_json;
+}
+
+/** Manual baselines retain the item-specific evidence version even after its photo is cancelled. */
+export async function baselineCaptureSequence(snapshot: Record<string, unknown>, execute: TxQueryFn): Promise<number> {
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return 0;
+  const recorded = Number(snapshot.capture_sequence);
+  const source = typeof snapshot.last_seen_batch_id === 'string'
+    ? (await execute<{ sequence: number }>('SELECT sequence FROM capture_batches WHERE id=$1', [snapshot.last_seen_batch_id])).rows[0]?.sequence ?? 0
+    : 0;
+  return Math.max(Number.isSafeInteger(recorded) && recorded >= 0 ? recorded : 0, source);
+}
+
+export async function saveManualCaptureBaseline(itemId: string, snapshot: Record<string, unknown>, execute: TxQueryFn): Promise<void> {
+  const prior = (await execute<{ snapshot_json: string }>('SELECT snapshot_json FROM capture_item_baselines WHERE item_id=$1', [itemId])).rows[0];
+  let previous: Record<string, unknown> = {};
+  try { previous = JSON.parse(prior?.snapshot_json ?? '{}'); } catch { /* Ignore invalid legacy metadata. */ }
+  const sequence = Math.max(await baselineCaptureSequence(snapshot, execute), await baselineCaptureSequence(previous, execute));
+  await execute(`INSERT INTO capture_item_baselines (item_id,snapshot_json) VALUES ($1,$2)
+    ON CONFLICT(item_id) DO UPDATE SET snapshot_json=excluded.snapshot_json`, [itemId, JSON.stringify({ ...snapshot, capture_sequence: sequence })]);
+}
+
 /** SQLite datetime('now') is UTC even though its text omits the timezone. */
 export function captureTimestampMs(value: string | null | undefined): number {
   if (!value) return Number.NaN;
@@ -72,6 +98,8 @@ export async function storePhotoPreview(
   transaction?: TxQueryFn,
 ): Promise<void> {
   const store = async (execute: TxQueryFn) => {
+    const batch = (await execute<{ cancelled_at: string | null }>('SELECT cancelled_at FROM capture_batches WHERE id=$1', [captureId])).rows[0];
+    if (batch?.cancelled_at) return;
     await execute('INSERT INTO capture_photo_history (capture_id,photo_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [captureId, photoId]);
     const current = (await execute('SELECT dismissed_at,length(preview_jpeg) AS size FROM capture_photo_history WHERE capture_id=$1 AND photo_id=$2', [captureId, photoId])).rows[0] as { dismissed_at: string | null; size: number | null };
     if (!preview || current.dismissed_at || preview.jpeg.length > 256 * 1024
@@ -93,7 +121,7 @@ export async function listPhotoHistory(userId: string, binId: string | null, loc
     JOIN location_members lm ON lm.location_id=b.location_id AND lm.user_id=$1
     LEFT JOIN capture_photo_history h ON h.capture_id=p.capture_id AND h.photo_id=p.id
     WHERE b.deleted_at IS NULL AND (b.visibility='location' OR b.created_by=$2)
-      AND p.received_at IS NOT NULL AND h.dismissed_at IS NULL
+      AND p.received_at IS NOT NULL AND h.dismissed_at IS NULL AND c.cancelled_at IS NULL
       AND (CAST($3 AS TEXT) IS NULL OR b.id=$4) AND (CAST($5 AS TEXT) IS NULL OR l.id=$6)
     ORDER BY c.created_at DESC,c.sequence DESC,p.position,p.id LIMIT 100`, [userId, userId, binId, binId, locationId, locationId])).rows as HistoryPhotoRow[];
   const observationsSql = `SELECT o.id,o.item_id,o.name,o.description,o.aliases_json,o.quantity,
@@ -120,7 +148,7 @@ export async function latestItemMedia(itemId: string, execute: TxQueryFn = query
     FROM observations o JOIN capture_batches c ON c.id=o.capture_id
     JOIN observation_photos op ON op.observation_id=o.id
     JOIN capture_photo_history h ON h.capture_id=op.capture_id AND h.photo_id=op.photo_id
-    WHERE o.item_id=$1 AND o.dismissed_at IS NULL AND h.dismissed_at IS NULL AND c.state IN ('applied','superseded')
+    WHERE o.item_id=$1 AND o.dismissed_at IS NULL AND h.dismissed_at IS NULL AND c.cancelled_at IS NULL AND c.state IN ('applied','superseded')
     ORDER BY c.sequence DESC,has_crop DESC,has_preview DESC,op.photo_id LIMIT 1`, [itemId])).rows[0] as {
       observation_id: string; photo_id: string; capture_id: string; has_crop: number; has_preview: number;
     } | undefined;
@@ -183,60 +211,68 @@ export async function dismissPhotoHistory(captureId: string, photoId: string, us
   if (!batch || !access) throw new NotFoundError('Photo record not found');
   await requireMemberOrAbove(access.locationId, userId, 'remove recognition history');
   await requireCreatorOrAdmin(access.locationId, userId, access.createdBy, 'remove recognition history');
-  return withCaptureTransaction(async (execute) => {
-    const photo = (await execute('SELECT id FROM capture_photos WHERE capture_id=$1 AND id=$2', [captureId, photoId])).rows[0];
-    if (!photo) throw new NotFoundError('Photo record not found');
-    await execute('INSERT INTO capture_photo_history (capture_id,photo_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [captureId, photoId]);
-    const existing = (await execute('SELECT dismissed_at FROM capture_photo_history WHERE capture_id=$1 AND photo_id=$2', [captureId, photoId])).rows[0] as { dismissed_at: string | null };
-    if (existing.dismissed_at) return { removed: true, removed_items: 0 };
-    const now = new Date().toISOString();
-    const affected = (await execute(`SELECT DISTINCT o.item_id FROM observations o JOIN observation_photos op ON op.observation_id=o.id
-      WHERE op.capture_id=$1 AND op.photo_id=$2 AND o.item_id IS NOT NULL`, [captureId, photoId])).rows as { item_id: string }[];
-    await execute('UPDATE capture_photo_history SET dismissed_at=$1,preview_jpeg=NULL,width=NULL,height=NULL WHERE capture_id=$2 AND photo_id=$3', [now, captureId, photoId]);
-    await execute('UPDATE observation_photos SET crop_jpeg=NULL,bbox_json=NULL WHERE capture_id=$1 AND photo_id=$2', [captureId, photoId]);
-    await execute(`UPDATE observations SET dismissed_at=$1 WHERE capture_id=$2 AND dismissed_at IS NULL AND NOT EXISTS (
-      SELECT 1 FROM observation_photos op JOIN capture_photo_history h ON h.capture_id=op.capture_id AND h.photo_id=op.photo_id
-      WHERE op.observation_id=observations.id AND h.dismissed_at IS NULL)`, [now, captureId]);
-    let removedItems = 0;
-    for (const { item_id: itemId } of affected) {
-      const item = (await execute('SELECT * FROM bin_items WHERE id=$1', [itemId])).rows[0] as InventoryRow | undefined;
-      if (!item || item.deleted_at) continue;
-      const currentObservation = (await execute(`SELECT o.created_at FROM observations o JOIN capture_batches c ON c.id=o.capture_id
-        WHERE o.item_id=$1 AND o.capture_id=$2 AND c.state IN ('applied','superseded') ORDER BY o.created_at DESC LIMIT 1`, [itemId, item.last_seen_batch_id])).rows[0] as { created_at: string } | undefined;
-      const surviving = (await execute(`SELECT o.*,c.captured_at FROM observations o JOIN capture_batches c ON c.id=o.capture_id
-        WHERE o.item_id=$1 AND o.dismissed_at IS NULL AND c.state IN ('applied','superseded')
-          AND EXISTS (SELECT 1 FROM observation_photos op JOIN capture_photo_history h
-            ON h.capture_id=op.capture_id AND h.photo_id=op.photo_id
-            WHERE op.observation_id=o.id AND h.dismissed_at IS NULL)
-        ORDER BY c.sequence DESC,o.created_at DESC,o.id DESC LIMIT 1`, [itemId])).rows[0] as (ObservationRow & { captured_at: string }) | undefined;
-      // Preserve manual content, but never retain a last-seen pointer to dismissed evidence.
-      if (!currentObservation || captureTimestampMs(item.updated_at) > captureTimestampMs(currentObservation.created_at)) {
-        await refreshItemEvidence(itemId, surviving, execute);
-        continue;
-      }
-      const baseline = (await execute('SELECT snapshot_json FROM capture_item_baselines WHERE item_id=$1', [itemId])).rows[0] as { snapshot_json: string } | undefined;
-      let baselineUpdatedAt = Number.NaN;
-      if (baseline) {
-        try {
-          const snapshot = JSON.parse(baseline.snapshot_json) as { updated_at?: string };
-          baselineUpdatedAt = captureTimestampMs(snapshot.updated_at);
-        } catch { /* Invalid baseline cannot supersede valid surviving evidence. */ }
-      }
-      if (surviving && baseline && baselineUpdatedAt > captureTimestampMs(surviving.created_at)
-        && await restoreBaseline(itemId, baseline.snapshot_json, execute)) await refreshItemEvidence(itemId, surviving, execute);
-      else if (surviving) await restoreFromObservation(itemId, surviving, execute);
-      else if (item.capture_created) {
-        await execute('UPDATE bin_items SET deleted_at=$1,updated_at=$2 WHERE id=$3', [now, now, itemId]);
-        removedItems++;
-      } else {
-        if (!baseline || !await restoreBaseline(itemId, baseline.snapshot_json, execute)) {
-          await execute("UPDATE bin_items SET last_seen_batch_id=NULL,last_seen_at=NULL,observation_state='unknown' WHERE id=$1", [itemId]);
-        } else await refreshItemEvidence(itemId, undefined, execute);
-      }
+  return withCaptureTransaction(execute => dismissPhotoEvidence(captureId, photoId, batch.bin_id, execute));
+}
+
+/** Caller owns one capture transaction, allowing all photos to be cancelled atomically. */
+export async function dismissPhotoEvidence(captureId: string, photoId: string, binId: string, execute: TxQueryFn) {
+  const photo = (await execute('SELECT id FROM capture_photos WHERE capture_id=$1 AND id=$2', [captureId, photoId])).rows[0];
+  if (!photo) throw new NotFoundError('Photo record not found');
+  await execute('INSERT INTO capture_photo_history (capture_id,photo_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [captureId, photoId]);
+  const existing = (await execute('SELECT dismissed_at FROM capture_photo_history WHERE capture_id=$1 AND photo_id=$2', [captureId, photoId])).rows[0] as { dismissed_at: string | null };
+  if (existing.dismissed_at) return { removed: true, removed_items: 0 };
+  const now = new Date().toISOString();
+  const affected = (await execute(`SELECT DISTINCT o.item_id FROM observations o JOIN observation_photos op ON op.observation_id=o.id
+    WHERE op.capture_id=$1 AND op.photo_id=$2 AND o.item_id IS NOT NULL`, [captureId, photoId])).rows as { item_id: string }[];
+  await execute('UPDATE capture_photo_history SET dismissed_at=$1,preview_jpeg=NULL,width=NULL,height=NULL WHERE capture_id=$2 AND photo_id=$3', [now, captureId, photoId]);
+  await execute('UPDATE observation_photos SET crop_jpeg=NULL,bbox_json=NULL WHERE capture_id=$1 AND photo_id=$2', [captureId, photoId]);
+  await execute(`UPDATE observations SET dismissed_at=$1 WHERE capture_id=$2 AND dismissed_at IS NULL AND NOT EXISTS (
+    SELECT 1 FROM observation_photos op JOIN capture_photo_history h ON h.capture_id=op.capture_id AND h.photo_id=op.photo_id
+    WHERE op.observation_id=observations.id AND h.dismissed_at IS NULL)`, [now, captureId]);
+  let removedItems = 0;
+  for (const { item_id: itemId } of affected) {
+    const item = (await execute('SELECT * FROM bin_items WHERE id=$1', [itemId])).rows[0] as InventoryRow | undefined;
+    if (!item || item.deleted_at) continue;
+    const currentObservation = (await execute(`SELECT o.* FROM observations o JOIN capture_batches c ON c.id=o.capture_id
+      WHERE o.item_id=$1 AND o.capture_id=$2 AND c.cancelled_at IS NULL AND c.state IN ('applied','superseded') ORDER BY o.created_at DESC LIMIT 1`, [itemId, item.last_seen_batch_id])).rows[0] as ObservationRow | undefined;
+    const surviving = (await execute(`SELECT o.*,c.captured_at FROM observations o JOIN capture_batches c ON c.id=o.capture_id
+      WHERE o.item_id=$1 AND o.dismissed_at IS NULL AND c.cancelled_at IS NULL AND c.state IN ('applied','superseded')
+        AND EXISTS (SELECT 1 FROM observation_photos op JOIN capture_photo_history h
+          ON h.capture_id=op.capture_id AND h.photo_id=op.photo_id
+          WHERE op.observation_id=o.id AND h.dismissed_at IS NULL)
+      ORDER BY c.sequence DESC,o.created_at DESC,o.id DESC LIMIT 1`, [itemId])).rows[0] as (ObservationRow & { captured_at: string }) | undefined;
+    const baseline = (await execute('SELECT snapshot_json FROM capture_item_baselines WHERE item_id=$1', [itemId])).rows[0] as { snapshot_json: string } | undefined;
+    let baselineSnapshot: Record<string, unknown> | undefined;
+    if (baseline) {
+      try { baselineSnapshot = JSON.parse(baseline.snapshot_json); } catch { /* Ignore invalid legacy metadata. */ }
     }
-    // In-flight recognition must re-read the surviving item snapshot before applying.
-    await execute('UPDATE bin_capture_state SET revision=revision+1 WHERE bin_id=$1', [batch.bin_id]);
-    await execute('UPDATE bins SET updated_at=$1 WHERE id=$2', [now, batch.bin_id]);
-    return { removed: true, removed_items: removedItems };
-  });
+    const baselineUpdatedAt = captureTimestampMs(baselineSnapshot?.updated_at as string | undefined);
+    const keepsManualBaseline = baselineSnapshot?.updated_at === item.updated_at && sameCaptureContent(item, baselineSnapshot);
+    // A late older photo can have a newer processing timestamp than a manual
+    // edit. Preserve explicit manual provenance when its evidence pointer moves.
+    const manuallyEdited = !currentObservation || !sameCaptureContent(item, currentObservation)
+      || captureTimestampMs(item.updated_at) > captureTimestampMs(currentObservation.created_at)
+      || keepsManualBaseline;
+    if (manuallyEdited) {
+      if (!keepsManualBaseline) await saveManualCaptureBaseline(itemId, { ...item }, execute);
+      await execute('UPDATE bin_items SET capture_created=0 WHERE id=$1', [itemId]);
+      await refreshItemEvidence(itemId, surviving, execute);
+      continue;
+    }
+    if (surviving && baseline && baselineUpdatedAt > captureTimestampMs(surviving.created_at)
+      && await restoreBaseline(itemId, baseline.snapshot_json, execute)) await refreshItemEvidence(itemId, surviving, execute);
+    else if (surviving) await restoreFromObservation(itemId, surviving, execute);
+    else if (item.capture_created) {
+      await execute('UPDATE bin_items SET deleted_at=$1,updated_at=$2 WHERE id=$3', [now, now, itemId]);
+      removedItems++;
+    } else {
+      if (!baseline || !await restoreBaseline(itemId, baseline.snapshot_json, execute)) {
+        await execute("UPDATE bin_items SET last_seen_batch_id=NULL,last_seen_at=NULL,observation_state='unknown' WHERE id=$1", [itemId]);
+      } else await refreshItemEvidence(itemId, undefined, execute);
+    }
+  }
+  // In-flight recognition must re-read the surviving item snapshot before applying.
+  await execute('UPDATE bin_capture_state SET revision=revision+1 WHERE bin_id=$1', [binId]);
+  await execute('UPDATE bins SET updated_at=$1 WHERE id=$2', [now, binId]);
+  return { removed: true, removed_items: removedItems };
 }

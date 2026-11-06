@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { query as execute } from '../db.js';
 import { asyncHandler } from '../lib/asyncHandler.js';
 import { verifyBinAccess } from '../lib/binAccess.js';
+import { cancelCapture } from '../lib/captures/cancel.js';
 import { captureConfig, supportedMimeTypes } from '../lib/captures/config.js';
 import { dismissPhotoHistory, latestItemMedia, listPhotoHistory } from '../lib/captures/history.js';
 import { authorizeCapture, captureStatus, completeCapture, createCapture, receivePhoto } from '../lib/captures/store.js';
@@ -70,7 +71,7 @@ router.get('/history', asyncHandler(async (req, res) => {
 }));
 
 router.get('/:id/photos/:photoId/preview', asyncHandler(async (req, res) => {
-  await authorizeCapture(req.params.id, req.user!.id);
+  if ((await authorizeCapture(req.params.id, req.user!.id)).cancelled_at) throw new NotFoundError('Photo preview not available');
   const row = (await execute(`SELECT preview_jpeg FROM capture_photo_history
     WHERE capture_id=$1 AND photo_id=$2 AND dismissed_at IS NULL AND preview_jpeg IS NOT NULL`, [req.params.id, req.params.photoId])).rows[0] as { preview_jpeg: Buffer } | undefined;
   if (!row) throw new NotFoundError('Photo preview not available');
@@ -84,7 +85,7 @@ router.get('/observations/:observationId/photos/:photoId/crop', asyncHandler(asy
     WHERE op.observation_id=$1 AND op.photo_id=$2 AND op.crop_jpeg IS NOT NULL
       AND o.dismissed_at IS NULL AND h.dismissed_at IS NULL`, [req.params.observationId, req.params.photoId])).rows[0] as { capture_id: string; crop_jpeg: Buffer } | undefined;
   if (!row) throw new NotFoundError('Item crop not available');
-  await authorizeCapture(row.capture_id, req.user!.id);
+  if ((await authorizeCapture(row.capture_id, req.user!.id)).cancelled_at) throw new NotFoundError('Item crop not available');
   res.type('image/jpeg').send(row.crop_jpeg);
 }));
 
@@ -98,7 +99,7 @@ router.get('/', asyncHandler(async (req, res) => {
   const captures = (await execute(`SELECT c.id FROM capture_batches c
     JOIN bins b ON b.id = c.bin_id
     JOIN location_members lm ON lm.location_id = b.location_id AND lm.user_id = $1
-    WHERE b.deleted_at IS NULL AND (b.visibility = 'location' OR b.created_by = $2)
+    WHERE b.deleted_at IS NULL AND c.cancelled_at IS NULL AND (b.visibility = 'location' OR b.created_by = $2)
       AND (CAST($3 AS TEXT) IS NULL OR c.bin_id = $4)
       AND (NOT EXISTS (SELECT 1 FROM capture_photos p WHERE p.capture_id=c.id)
         OR EXISTS (SELECT 1 FROM capture_photos p LEFT JOIN capture_photo_history h
@@ -121,6 +122,10 @@ router.get('/:id', asyncHandler(async (req, res) => {
 // Body remains a bounded stream; image data never goes through JSON or logs.
 router.put('/:id/photos/:photoId', asyncHandler(async (req, res) => {
   res.json(await receivePhoto(req, req.params.id, req.params.photoId, req.user!.id));
+}));
+
+router.post('/:id/cancel', asyncHandler(async (req, res) => {
+  res.json(await cancelCapture(req.params.id, req.user!.id, req.body?.bin_id));
 }));
 
 router.post('/:id/complete', asyncHandler(async (req, res) => {

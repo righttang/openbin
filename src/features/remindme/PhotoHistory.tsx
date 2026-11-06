@@ -20,7 +20,7 @@ const inProgress = (state: PhotoHistoryRecord['state']) => ['uploading', 'queued
 const photoKey = (photo: PhotoHistoryRecord) => `${photo.capture_id}/${photo.photo_id}`;
 const labels: Record<PhotoHistoryRecord['state'], string> = {
   uploading: '待上传完成', queued: '等待识别', processing: '识别中', applied: '识别完成',
-  superseded: '历史识别结果', failed: '识别失败', expired: '上传已过期',
+  superseded: '历史识别结果', failed: '识别失败', expired: '上传已过期', cancelled: '已取消',
 };
 
 function Preview({ photo }: { photo: PhotoHistoryRecord }) {

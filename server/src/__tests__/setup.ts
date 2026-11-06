@@ -23,6 +23,7 @@ const TABLES = [
   'analysis_jobs',
   'capture_photos',
   'capture_batches',
+  'capture_cancellations',
   'bin_capture_state',
   'email_log',
   'refresh_tokens',

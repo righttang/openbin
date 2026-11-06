@@ -569,7 +569,14 @@ CREATE TABLE IF NOT EXISTS capture_batches (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   cleanup_completed_at TEXT,
+  cancelled_at TEXT,
   UNIQUE(bin_id, sequence)
+);
+CREATE TABLE IF NOT EXISTS capture_cancellations (
+  id TEXT PRIMARY KEY,
+  bin_id TEXT NOT NULL REFERENCES bins(id) ON DELETE CASCADE,
+  created_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  cancelled_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_capture_batches_bin ON capture_batches(bin_id, sequence DESC);
 CREATE INDEX IF NOT EXISTS idx_capture_batches_cleanup ON capture_batches(state, cleanup_completed_at, expires_at);

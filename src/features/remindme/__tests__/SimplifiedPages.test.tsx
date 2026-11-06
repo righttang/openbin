@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ToastProvider } from '@/components/ui/toast';
 import { FindPage } from '../FindPage';
 import { HistoryPage } from '../HistoryPage';
 import { PlacesPage } from '../PlacesPage';
@@ -48,6 +49,29 @@ describe('simple search', () => {
     const params = new URLSearchParams(path.split('?')[1]);
     expect(params.get('q')).toBe('剪刀');
     expect(params.get('bin_id')).toBe('drawer');
+  });
+
+  it('soft deletes only the selected item and restores it through the visible undo action', async () => {
+    const item = { id: 'scissors', name: '剪刀', description: '', aliases: [], quantity: 1, bin_id: 'drawer', bin_name: '书桌抽屉', last_seen_at: null };
+    mocks.api.mockImplementation((path: string) => Promise.resolve(path.includes('/bulk-') ? { deleted: 1, restored: 1 } : { items: [item] }));
+    render(<MemoryRouter initialEntries={['/find?place=drawer']}><ToastProvider><FindPage /></ToastProvider></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('button', { name: '删除物品剪刀' }));
+    await waitFor(() => expect(mocks.api).toHaveBeenCalledWith('/api/items/bulk-delete', { method: 'POST', body: { ids: ['scissors'] } }));
+    expect(await screen.findByText('已删除“剪刀”')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('button', { name: '查看剪刀详情' })).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: '撤销' }));
+    await waitFor(() => expect(mocks.api).toHaveBeenCalledWith('/api/items/bulk-restore', { method: 'POST', body: { ids: ['scissors'] } }));
+    expect(await screen.findByRole('button', { name: '查看剪刀详情' })).toBeInTheDocument();
+  });
+
+  it('keeps the item in search when its deletion fails', async () => {
+    const item = { id: 'scissors', name: '剪刀', description: '', aliases: [], quantity: 1, bin_id: 'drawer', bin_name: '书桌抽屉', last_seen_at: null };
+    mocks.api.mockImplementation((path: string) => path.includes('/bulk-delete') ? Promise.reject(new Error('offline')) : Promise.resolve({ items: [item] }));
+    render(<MemoryRouter initialEntries={['/find?place=drawer']}><ToastProvider><FindPage /></ToastProvider></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('button', { name: '删除物品剪刀' }));
+    expect(await screen.findByText('删除失败，物品仍保留，请重试。')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '查看剪刀详情' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '删除物品剪刀' })).toBeEnabled();
   });
 });
 

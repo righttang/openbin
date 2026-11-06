@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { query } from '../../db.js';
 import { createLogger } from '../logger.js';
 import { isRestoreInProgress } from '../restore.js';
-import { cleanupCapture, holdCapture, sweepCaptures } from './cleanup.js';
+import { cleanupCapture, holdCapture, registerCaptureAbort, sweepCaptures } from './cleanup.js';
 import { captureConfig } from './config.js';
 import { withCaptureTransaction } from './database.js';
 import { prepareObservationMedia } from './media.js';
@@ -38,25 +38,27 @@ export async function claimCapture(now: Date): Promise<ClaimedCapture | undefine
     // A crashed process leaves its lease behind. Only an expired lease is reclaimed.
     await execute(`UPDATE analysis_jobs SET state='retry',lease_token=NULL,lease_until=NULL,
       error_category='worker_interrupted',next_attempt_at=$1,updated_at=$2
-      WHERE state='processing' AND (lease_until IS NULL OR lease_until<=$3)`, [timestamp, timestamp, timestamp]);
-    await execute(`UPDATE capture_batches SET state='queued',updated_at=$1 WHERE state='processing'
+      WHERE state='processing' AND (lease_until IS NULL OR lease_until<=$3)
+      AND capture_id IN (SELECT id FROM capture_batches WHERE cancelled_at IS NULL)`, [timestamp, timestamp, timestamp]);
+    await execute(`UPDATE capture_batches SET state='queued',updated_at=$1 WHERE state='processing' AND cancelled_at IS NULL
       AND id IN (SELECT capture_id FROM analysis_jobs WHERE state='retry')`, [timestamp]);
     // A job that exhausted its budget before a crash must not get an unbounded extra attempt.
     const exhausted = (await execute(`SELECT id,capture_id FROM analysis_jobs
-      WHERE state IN ('queued','retry') AND attempts>=$1`, [maxAttempts()])).rows as Array<{ id: string; capture_id: string }>;
+      WHERE state IN ('queued','retry') AND attempts>=$1
+        AND capture_id IN (SELECT id FROM capture_batches WHERE cancelled_at IS NULL)`, [maxAttempts()])).rows as Array<{ id: string; capture_id: string }>;
     for (const job of exhausted) {
       await execute(`UPDATE analysis_jobs SET state='failed',lease_token=NULL,lease_until=NULL,updated_at=$1 WHERE id=$2`, [timestamp, job.id]);
       await execute(`UPDATE capture_batches SET state='failed',expires_at=$1,updated_at=$2 WHERE id=$3`, [new Date(now.getTime() + captureConfig.failureTtlMs).toISOString(), timestamp, job.capture_id]);
     }
-    const row = (await execute(`SELECT j.id AS job_id,j.capture_id,j.attempts,c.bin_id,c.created_by,c.sequence,c.captured_at,
+    const row = (await execute(`SELECT j.id AS job_id,j.capture_id,j.attempts,c.bin_id,c.created_by,c.sequence,c.captured_at,c.source,
       b.name AS bin_name,s.revision FROM analysis_jobs j
       JOIN capture_batches c ON c.id=j.capture_id JOIN bins b ON b.id=c.bin_id
       JOIN bin_capture_state s ON s.bin_id=c.bin_id
       WHERE j.state IN ('queued','retry') AND j.next_attempt_at<=$1 AND j.analysis_version=$2
-      AND c.state='queued'
+      AND c.state='queued' AND c.cancelled_at IS NULL
       ORDER BY c.sequence,c.created_at LIMIT 1`, [timestamp, CAPTURE_ANALYSIS_VERSION])).rows[0] as {
         job_id: string; capture_id: string; attempts: number; bin_id: string; created_by: string;
-        sequence: number; captured_at: string; bin_name: string; revision: number;
+        sequence: number; captured_at: string; source: string; bin_name: string; revision: number;
       } | undefined;
     if (!row) return undefined;
     const token = crypto.randomUUID();
@@ -72,7 +74,7 @@ export async function claimCapture(now: Date): Promise<ClaimedCapture | undefine
     await execute(`UPDATE capture_batches SET state='processing',updated_at=$1 WHERE id=$2`, [timestamp, row.capture_id]);
     return {
       jobId: row.job_id, captureId: row.capture_id, binId: row.bin_id, binName: row.bin_name,
-      createdBy: row.created_by, sequence: row.sequence, capturedAt: row.captured_at,
+      createdBy: row.created_by, source: row.source, sequence: row.sequence, capturedAt: row.captured_at,
       revision: row.revision, leaseToken: token, attempts: row.attempts + 1,
       existingItems: await readExistingCaptureItems(row.bin_id, execute),
     };
@@ -115,7 +117,7 @@ export async function processNextCapture(options: CaptureWorkerOptions = {}): Pr
   let release: (() => void) | undefined;
   let heartbeat: ReturnType<typeof setInterval> | undefined;
   let claim: ClaimedCapture | undefined;
-  let successful = false;
+  let unregister: (() => void) | undefined;
   const execute = query;
   const now = options.now ?? (() => new Date());
   const controller = new AbortController();
@@ -123,6 +125,7 @@ export async function processNextCapture(options: CaptureWorkerOptions = {}): Pr
   try {
     claim = await claimCapture(now());
     if (!claim) return false;
+    unregister = registerCaptureAbort(claim.captureId, () => controller.abort());
     await assertCaptureWritable(claim);
     const activeClaim = claim;
     release = holdCapture(claim.captureId);
@@ -160,22 +163,23 @@ export async function processNextCapture(options: CaptureWorkerOptions = {}): Pr
       }
     }
     const input = { captureId: claim.captureId, binName: claim.binName, photos, existingItems: claim.existingItems, signal };
+    if (signal.aborted) throw new CaptureProcessingError('worker_interrupted');
     const output = await (options.recognize ?? recognizeCapture)(input);
     if (signal.aborted) throw new CaptureProcessingError('worker_interrupted');
     const result = validateRecognition(output, input);
     const media = await prepareObservationMedia(photos, result.items);
     if (signal.aborted) throw new CaptureProcessingError('worker_interrupted');
     await commitRecognition(claim, result, now(), media);
-    successful = true;
     return true;
   } catch (error) {
     if (claim) await recordFailure(claim, error instanceof CaptureProcessingError ? error : new CaptureProcessingError('internal_error'), now());
     return !!claim;
   } finally {
     if (heartbeat) clearInterval(heartbeat);
+    unregister?.();
     release?.();
     // Commit precedes deletion; deletion failure remains durable cleanup-pending work for the sweeper.
-    if (successful && claim) await cleanupCapture(claim.captureId).catch(() => {});
+    if (claim) await cleanupCapture(claim.captureId).catch(() => {});
     busy = false;
   }
 }
