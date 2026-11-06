@@ -37,6 +37,109 @@ actor FakeCaptureAPI: CaptureTransport {
     }
 }
 
+actor ExpiryAtUploadAPI: CaptureTransport {
+    func create(_ draft: PhotoDraft) async throws -> Capture { Capture(id: draft.id, state: "uploading") }
+    func upload(_ draft: PhotoDraft, file: URL) async throws { throw APIError.response(410, "Capture expired. Start a new capture.", code: "CAPTURE_EXPIRED") }
+    func complete(_ draft: PhotoDraft) async throws -> Capture { Capture(id: draft.id, state: "queued") }
+    func capture(_ id: String) async throws -> Capture { Capture(id: id, state: "expired") }
+    func cancel(_ id: String, placeID: String) async throws { }
+}
+
+actor RecordingCaptureAPI: CaptureTransport {
+    var createdDates: [String] = []
+    func create(_ draft: PhotoDraft) async throws -> Capture { createdDates.append(draft.capturedAt); return Capture(id: draft.id, state: "uploading") }
+    func upload(_ draft: PhotoDraft, file: URL) async throws { }
+    func complete(_ draft: PhotoDraft) async throws -> Capture { Capture(id: draft.id, state: "queued") }
+    func capture(_ id: String) async throws -> Capture { Capture(id: id, state: "queued") }
+    func cancel(_ id: String, placeID: String) async throws { }
+}
+
+final class CaptureErrorURLProtocol: URLProtocol {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        let code = request.url!.lastPathComponent
+        let response = HTTPURLResponse(url: request.url!, statusCode: 410, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: try! JSONSerialization.data(withJSONObject: ["error": code, "message": "Capture unavailable"]))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() { }
+}
+
+extension CaptureQueueTests {
+    func image(_ color: UIColor) -> Data {
+        UIGraphicsImageRenderer(size: CGSize(width: 40, height: 20)).jpegData(withCompressionQuality: 0.8) { context in color.setFill(); context.fill(CGRect(x: 0, y: 0, width: 40, height: 20)) }
+    }
+    func setCapturedAt(_ draft: PhotoDraft, _ value: String) throws {
+        let path = folder.appendingPathComponent(draft.id + ".json")
+        var json = try JSONSerialization.jsonObject(with: Data(contentsOf: path)) as! [String: Any]
+        json["capturedAt"] = value
+        try JSONSerialization.data(withJSONObject: json).write(to: path, options: .atomic)
+    }
+    func testUploadExpiryKeepsUnacknowledgedOriginal() async throws {
+        let queue = CaptureQueue(api: ExpiryAtUploadAPI(), folder: folder); defer { queue.stop() }
+        try queue.enqueue(jpeg: image(), place: .init(id: "drawer", name: "抽屉"))
+        let id = queue.drafts[0].id
+        queue.start(); try await waitUntil { ["cancelled", "expired", "failed"].contains(queue.drafts[0].state) }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: queue.photoURL(id).path), "An expired upload was never accepted or cancelled by the user; its only photo must survive")
+        XCTAssertNotEqual(queue.drafts[0].state, "cancelled")
+    }
+    func testAPIKeepsDistinctExpiryAndCancellationCodes() async throws {
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [CaptureErrorURLProtocol.self]
+        let session = URLSession(configuration: config); defer { session.invalidateAndCancel() }
+        let api = APIClient(baseURL: URL(string: "http://localhost")!, session: session)
+        for code in ["CAPTURE_EXPIRED", "CAPTURE_CANCELLED"] {
+            do { _ = try await api.capture(code); XCTFail("Expected a server error") }
+            catch { XCTAssertEqual((error as? APIError)?.status, 410); XCTAssertEqual((error as? APIError)?.code, code) }
+        }
+    }
+    func testQuotaFailureDuringReplacementDoesNotLoseOriginal() async throws {
+        let api = FakeCaptureAPI(); await api.configure(expired: true)
+        let queue = CaptureQueue(api: api, folder: folder); defer { queue.stop() }
+        try queue.enqueue(jpeg: image(), place: .init(id: "drawer", name: "抽屉"))
+        let original = queue.drafts[0]
+        queue.start(); try await waitUntil { queue.drafts[0].state == "expired" }; queue.stop()
+        for _ in 0..<29 { try queue.enqueue(jpeg: image(.blue), place: .init(id: "drawer", name: "抽屉")) }
+        await api.configure()
+        queue.retry(original.id)
+        try await waitUntil { queue.drafts.first(where: { $0.id == original.id })?.error != nil }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: queue.photoURL(original.id).path))
+        XCTAssertEqual(queue.drafts.first(where: { $0.id == original.id })?.state, "expired")
+        queue.start()
+        try await waitUntil { queue.drafts.filter { $0.id != original.id }.allSatisfy(\.accepted) }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: queue.photoURL(original.id).path))
+        queue.retry(original.id)
+        try await waitUntil { queue.drafts.allSatisfy { $0.accepted || $0.state == "cancelled" } }
+        let retainedOrAccepted = FileManager.default.fileExists(atPath: queue.photoURL(original.id).path) || queue.drafts.contains { $0.accepted && $0.photo.sha256 == original.photo.sha256 }
+        XCTAssertTrue(retainedOrAccepted, "Retrying after the full-queue replacement failure deleted the only unaccepted original")
+    }
+    func testRestoredQueueRegistersOlderPhotosBeforeNewerPhotos() async throws {
+        let api = RecordingCaptureAPI()
+        let queue = CaptureQueue(api: api, folder: folder)
+        try queue.enqueue(jpeg: image(), place: .init(id: "drawer", name: "抽屉"))
+        try setCapturedAt(queue.drafts[0], "2026-11-05T10:00:00Z")
+        try queue.enqueue(jpeg: image(.blue), place: .init(id: "drawer", name: "抽屉"))
+        try setCapturedAt(queue.drafts[0], "2026-11-05T11:00:00Z")
+        let restored = CaptureQueue(api: api, folder: folder); defer { restored.stop() }
+        restored.start(); try await waitUntil { restored.drafts.allSatisfy(\.accepted) }
+        let dates = await api.createdDates
+        XCTAssertEqual(dates, dates.sorted(), "Server sequence follows registration order, so replaying newest first makes older photos win reconciliation")
+    }
+    func testExpiredReplacementPreservesOriginalCaptureTime() async throws {
+        let api = FakeCaptureAPI(); await api.configure(expired: true)
+        let queue = CaptureQueue(api: api, folder: folder)
+        try queue.enqueue(jpeg: image(), place: .init(id: "drawer", name: "抽屉"))
+        let oldID = queue.drafts[0].id
+        try setCapturedAt(queue.drafts[0], "2026-11-05T10:00:00Z")
+        let restored = CaptureQueue(api: api, folder: folder); defer { restored.stop() }
+        restored.start(); try await waitUntil { restored.drafts[0].state == "expired" }
+        await api.configure(); restored.retry(oldID)
+        try await waitUntil { restored.drafts.contains { $0.id != oldID && $0.accepted } }
+        XCTAssertEqual(restored.drafts.first(where: { $0.id != oldID })?.capturedAt, "2026-11-05T10:00:00Z")
+    }
+}
+
 @MainActor final class CaptureQueueTests: XCTestCase {
     var folder: URL!
     override func setUp() { folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString) }

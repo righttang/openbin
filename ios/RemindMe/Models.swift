@@ -83,6 +83,12 @@ enum ServerAddress {
     }
 }
 
+func captureTimestamp() -> String {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter.string(from: Date())
+}
+
 func photoDate(_ raw: String?) -> String {
     guard let raw else { return "尚无拍摄记录" }
     let normalized = raw.contains("T") ? raw : raw.replacingOccurrences(of: " ", with: "T") + "Z"

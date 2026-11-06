@@ -31,23 +31,40 @@ export function sameCaptureContent(left: CaptureContent, right: CaptureContent):
     && left.quantity === right.quantity && left.aliases_json === right.aliases_json;
 }
 
-/** Manual baselines retain the item-specific evidence version even after its photo is cancelled. */
-export async function baselineCaptureSequence(snapshot: Record<string, unknown>, execute: TxQueryFn): Promise<number> {
-  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return 0;
-  const recorded = Number(snapshot.capture_sequence);
+export interface CaptureVersion { sequence: number; captured_at: string | null }
+
+/** Offline uploads can register late; photographed time decides which evidence is newer. */
+export function compareCaptureVersions(left: CaptureVersion, right: CaptureVersion): number {
+  const leftTime = captureTimestampMs(left.captured_at);
+  const rightTime = captureTimestampMs(right.captured_at);
+  if (Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime !== rightTime) return leftTime - rightTime;
+  return left.sequence - right.sequence;
+}
+
+/** Manual baselines retain the evidence version even after its photo is cancelled. */
+export async function baselineCaptureVersion(snapshot: Record<string, unknown>, execute: TxQueryFn): Promise<CaptureVersion> {
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return { sequence: 0, captured_at: null };
+  const sequence = Number(snapshot.capture_sequence);
+  const recorded = {
+    sequence: Number.isSafeInteger(sequence) && sequence >= 0 ? sequence : 0,
+    captured_at: typeof snapshot.capture_timestamp === 'string' ? snapshot.capture_timestamp
+      : typeof snapshot.last_seen_at === 'string' ? snapshot.last_seen_at : null,
+  };
   const source = typeof snapshot.last_seen_batch_id === 'string'
-    ? (await execute<{ sequence: number }>('SELECT sequence FROM capture_batches WHERE id=$1', [snapshot.last_seen_batch_id])).rows[0]?.sequence ?? 0
-    : 0;
-  return Math.max(Number.isSafeInteger(recorded) && recorded >= 0 ? recorded : 0, source);
+    ? (await execute<CaptureVersion>('SELECT sequence,captured_at FROM capture_batches WHERE id=$1', [snapshot.last_seen_batch_id])).rows[0]
+    : undefined;
+  return source && compareCaptureVersions(source, recorded) > 0 ? source : recorded;
 }
 
 export async function saveManualCaptureBaseline(itemId: string, snapshot: Record<string, unknown>, execute: TxQueryFn): Promise<void> {
   const prior = (await execute<{ snapshot_json: string }>('SELECT snapshot_json FROM capture_item_baselines WHERE item_id=$1', [itemId])).rows[0];
   let previous: Record<string, unknown> = {};
   try { previous = JSON.parse(prior?.snapshot_json ?? '{}'); } catch { /* Ignore invalid legacy metadata. */ }
-  const sequence = Math.max(await baselineCaptureSequence(snapshot, execute), await baselineCaptureSequence(previous, execute));
+  const currentVersion = await baselineCaptureVersion(snapshot, execute);
+  const previousVersion = await baselineCaptureVersion(previous, execute);
+  const latest = compareCaptureVersions(currentVersion, previousVersion) >= 0 ? currentVersion : previousVersion;
   await execute(`INSERT INTO capture_item_baselines (item_id,snapshot_json) VALUES ($1,$2)
-    ON CONFLICT(item_id) DO UPDATE SET snapshot_json=excluded.snapshot_json`, [itemId, JSON.stringify({ ...snapshot, capture_sequence: sequence })]);
+    ON CONFLICT(item_id) DO UPDATE SET snapshot_json=excluded.snapshot_json`, [itemId, JSON.stringify({ ...snapshot, capture_sequence: latest.sequence, capture_timestamp: latest.captured_at })]);
 }
 
 /** SQLite datetime('now') is UTC even though its text omits the timezone. */
@@ -123,7 +140,7 @@ export async function listPhotoHistory(userId: string, binId: string | null, loc
     WHERE b.deleted_at IS NULL AND (b.visibility='location' OR b.created_by=$2)
       AND p.received_at IS NOT NULL AND h.dismissed_at IS NULL AND c.cancelled_at IS NULL
       AND (CAST($3 AS TEXT) IS NULL OR b.id=$4) AND (CAST($5 AS TEXT) IS NULL OR l.id=$6)
-    ORDER BY c.created_at DESC,c.sequence DESC,p.position,p.id LIMIT 100`, [userId, userId, binId, binId, locationId, locationId])).rows as HistoryPhotoRow[];
+    ORDER BY c.captured_at DESC,c.sequence DESC,p.position,p.id LIMIT 100`, [userId, userId, binId, binId, locationId, locationId])).rows as HistoryPhotoRow[];
   const observationsSql = `SELECT o.id,o.item_id,o.name,o.description,o.aliases_json,o.quantity,
     CASE WHEN op.crop_jpeg IS NOT NULL THEN 1 ELSE 0 END AS has_crop
     FROM observation_photos op JOIN observations o ON o.id=op.observation_id
@@ -149,7 +166,7 @@ export async function latestItemMedia(itemId: string, execute: TxQueryFn = query
     JOIN observation_photos op ON op.observation_id=o.id
     JOIN capture_photo_history h ON h.capture_id=op.capture_id AND h.photo_id=op.photo_id
     WHERE o.item_id=$1 AND o.dismissed_at IS NULL AND h.dismissed_at IS NULL AND c.cancelled_at IS NULL AND c.state IN ('applied','superseded')
-    ORDER BY c.sequence DESC,has_crop DESC,has_preview DESC,op.photo_id LIMIT 1`, [itemId])).rows[0] as {
+    ORDER BY c.captured_at DESC,c.sequence DESC,has_crop DESC,has_preview DESC,op.photo_id LIMIT 1`, [itemId])).rows[0] as {
       observation_id: string; photo_id: string; capture_id: string; has_crop: number; has_preview: number;
     } | undefined;
   return {
@@ -240,7 +257,7 @@ export async function dismissPhotoEvidence(captureId: string, photoId: string, b
         AND EXISTS (SELECT 1 FROM observation_photos op JOIN capture_photo_history h
           ON h.capture_id=op.capture_id AND h.photo_id=op.photo_id
           WHERE op.observation_id=o.id AND h.dismissed_at IS NULL)
-      ORDER BY c.sequence DESC,o.created_at DESC,o.id DESC LIMIT 1`, [itemId])).rows[0] as (ObservationRow & { captured_at: string }) | undefined;
+      ORDER BY c.captured_at DESC,c.sequence DESC,o.created_at DESC,o.id DESC LIMIT 1`, [itemId])).rows[0] as (ObservationRow & { captured_at: string }) | undefined;
     const baseline = (await execute('SELECT snapshot_json FROM capture_item_baselines WHERE item_id=$1', [itemId])).rows[0] as { snapshot_json: string } | undefined;
     let baselineSnapshot: Record<string, unknown> | undefined;
     if (baseline) {

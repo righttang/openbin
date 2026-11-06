@@ -24,7 +24,7 @@ struct PlacesView: View {
                     }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || busy).accessibilityIdentifier("places.add")
                 }
             } header: { Text("新地点") } footer: { Text("直接给抽屉、盒子或架子命名，不需要创建多层分类。") }
-            if let error { Text(error).foregroundStyle(.red).font(.footnote) }
+            if let error = error ?? store.error { Text(error).foregroundStyle(.red).font(.footnote) }
             Section("已有地点") {
                 ForEach(store.places) { place in
                     HStack {

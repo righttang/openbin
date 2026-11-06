@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { query, type TxQueryFn } from '../../db.js';
 import { withCaptureTransaction } from './database.js';
-import { baselineCaptureSequence, canStoreHistoryBytes, captureTimestampMs, sameCaptureContent, saveManualCaptureBaseline } from './history.js';
+import { baselineCaptureVersion, canStoreHistoryBytes, captureTimestampMs, compareCaptureVersions, sameCaptureContent, saveManualCaptureBaseline } from './history.js';
 import type { ObservationMedia } from './media.js';
 import type { ExistingCaptureItem, RecognitionResult } from './recognition.js';
 import { CAPTURE_PROMPT_VERSION, CaptureProcessingError, normalizeItemName } from './recognition.js';
@@ -92,24 +92,26 @@ export async function commitRecognition(
       ].filter(Boolean))].slice(0, 12);
       // An older instant photo can contribute its own evidence and new items,
       // but must not overwrite a newer photo's fields for a shared item.
-      let existingSequence = 0;
+      let applyItem = applyInventory;
       if (instant && old) {
         const currentItem = (await execute<{
           name: string; description: string; quantity: number | null; aliases_json: string;
-          updated_at: string; sequence: number | null; snapshot_json: string | null;
-        }>(`SELECT i.name,i.description,i.quantity,i.aliases_json,i.updated_at,c.sequence,bl.snapshot_json
+          updated_at: string; sequence: number | null; captured_at: string | null; snapshot_json: string | null;
+        }>(`SELECT i.name,i.description,i.quantity,i.aliases_json,i.updated_at,c.sequence,c.captured_at,bl.snapshot_json
           FROM bin_items i LEFT JOIN capture_batches c ON c.id=i.last_seen_batch_id
           LEFT JOIN capture_item_baselines bl ON bl.item_id=i.id WHERE i.id=$1`, [old.id])).rows[0];
-        existingSequence = currentItem?.sequence ?? 0;
+        let existingVersion = { sequence: currentItem?.sequence ?? 0, captured_at: currentItem?.captured_at ?? null };
         if (currentItem?.snapshot_json) {
           let baseline: Record<string, unknown> | undefined;
           try { baseline = JSON.parse(currentItem.snapshot_json); } catch { /* Ignore invalid legacy metadata. */ }
           if (baseline?.updated_at === currentItem.updated_at && sameCaptureContent(currentItem, baseline)) {
-            existingSequence = Math.max(existingSequence, await baselineCaptureSequence(baseline, execute));
+            const baselineVersion = await baselineCaptureVersion(baseline, execute);
+            if (compareCaptureVersions(baselineVersion, existingVersion) > 0) existingVersion = baselineVersion;
           }
         }
+        applyItem = applyItem && compareCaptureVersions({ sequence: claim.sequence, captured_at: claim.capturedAt }, existingVersion) >= 0;
       }
-      if (applyInventory && existingSequence <= claim.sequence) {
+      if (applyItem) {
         if (old) {
           const original = (await execute(`SELECT name,quantity,normalized_name,aliases_json,description,
             last_seen_batch_id,last_seen_at,observation_state,updated_at,capture_created FROM bin_items

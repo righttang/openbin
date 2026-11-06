@@ -1,18 +1,19 @@
 import Foundation
 
 enum APIError: LocalizedError {
-    case response(Int, String)
+    case response(Int, String, code: String? = nil)
     case message(String)
     var errorDescription: String? {
         switch self {
         case .message(let text): return text
-        case .response(let code, let text):
+        case .response(let code, let text, _):
             if code == 401 { return "这个服务器未开启内网免登录模式。" }
             if code == 410 { return "这次拍摄已取消或过期。" }
             return text.isEmpty ? "服务器暂时无法处理，请重试（\(code)）。" : text
         }
     }
-    var status: Int? { if case .response(let code, _) = self { return code }; return nil }
+    var status: Int? { if case .response(let code, _, _) = self { return code }; return nil }
+    var code: String? { if case .response(_, _, let code) = self { return code }; return nil }
 }
 
 protocol CaptureTransport: Sendable {
@@ -56,8 +57,8 @@ actor APIClient: CaptureTransport {
         if let cookieHeader = response.value(forHTTPHeaderField: "Set-Cookie"),
            let token = HTTPCookie.cookies(withResponseHeaderFields: ["Set-Cookie": cookieHeader], for: baseURL).first(where: { $0.name == "openbin-csrf" })?.value { csrf = token }
         guard (200..<300).contains(response.statusCode) else {
-            let message = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["message"] as? String ?? ""
-            throw APIError.response(response.statusCode, message)
+            let error = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            throw APIError.response(response.statusCode, error?["message"] as? String ?? "", code: error?["error"] as? String)
         }
         return data
     }

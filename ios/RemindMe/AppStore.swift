@@ -107,10 +107,11 @@ struct UndoRecord: Identifiable {
     func receive(_ data: Data, at place: Place) async {
         preparingPhotos += 1
         let targetQueue = queue
+        let capturedAt = captureTimestamp()
         defer { preparingPhotos -= 1 }
         do {
             let jpeg = try await Task.detached(priority: .userInitiated) { try PhotoProcessor.jpeg(data) }.value
-            try targetQueue.enqueue(jpeg: jpeg, place: place)
+            try targetQueue.enqueue(jpeg: jpeg, place: place, capturedAt: capturedAt)
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
         } catch { self.error = error.localizedDescription }
     }

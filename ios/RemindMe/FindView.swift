@@ -9,7 +9,7 @@ struct FindView: View {
     @State private var error: String?
     var body: some View {
         List {
-            if !store.connected { ConnectionNote().listRowSeparator(.hidden) }
+            ConnectionNote().listRowSeparator(.hidden)
             Picker("地点", selection: $place) {
                 Text("所有地点").tag("")
                 ForEach(store.places) { Text($0.name).tag($0.id) }
@@ -68,6 +68,7 @@ struct ItemDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                ConnectionNote()
                 RemotePhoto(path: item.crop_url ?? item.photo_preview_url, fallback: item.photo_preview_url, fit: true)
                     .frame(maxWidth: .infinity).frame(height: 290).background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20)).clipShape(RoundedRectangle(cornerRadius: 20))
                 Text(item.crop_url == nil ? "原照片预览" : "物品裁剪照片").font(.caption).foregroundStyle(.secondary)

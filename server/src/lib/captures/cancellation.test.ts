@@ -14,6 +14,7 @@ import { createApp } from '../../index.js';
 import { signToken } from '../../middleware/auth.js';
 import { captureDirectory } from './cleanup.js';
 import { captureConfig } from './config.js';
+import { latestItemMedia, listPhotoHistory } from './history.js';
 import * as media from './media.js';
 import { CaptureProcessingError, type RecognitionResult } from './recognition.js';
 import { receivePhoto } from './store.js';
@@ -62,8 +63,8 @@ afterAll(async () => {
   }
 });
 
-function create(id = crypto.randomUUID(), source = 'web-instant') {
-  return request(app).post('/api/captures').set('Authorization', `Bearer ${token}`).send({ id, bin_id: binId, source });
+function create(id = crypto.randomUUID(), source = 'web-instant', capturedAt?: string) {
+  return request(app).post('/api/captures').set('Authorization', `Bearer ${token}`).send({ id, bin_id: binId, source, captured_at: capturedAt });
 }
 function cancel(id: string, auth = token) {
   return request(app).post(`/api/captures/${id}/cancel`).set('Authorization', `Bearer ${auth}`).send({ bin_id: binId });
@@ -328,6 +329,39 @@ describe('capture cancellation and instant photos', () => {
     expect((await items())[0].quantity).toBe(5);
     expect((await cancel(first.id)).body.removed_items).toBe(0);
     expect((await items())[0].quantity).toBe(5);
+  });
+
+  it('uses photographed time for offline uploads, media and surviving history', async () => {
+    const latest = await seal((await create(crypto.randomUUID(), 'web-instant', '2026-11-06T12:00:00Z')).body.id);
+    await processNextCapture({ recognize: async () => recognized(latest.photoId, null, 3) });
+    const current = (await items())[0];
+    const oldest = await seal((await create(crypto.randomUUID(), 'web-instant', '2026-11-06T10:00:00Z')).body.id);
+    await processNextCapture({ recognize: async () => recognized(oldest.photoId, current.id, 1) });
+    const middle = await seal((await create(crypto.randomUUID(), 'web-instant', '2026-11-06T11:00:00Z')).body.id);
+    await processNextCapture({ recognize: async () => recognized(middle.photoId, current.id, 2) });
+
+    expect((await items())[0]).toEqual(current);
+    expect((await latestItemMedia(current.id)).crop_url).toContain(latest.photoId);
+    expect((await listPhotoHistory(userId, binId, null)).map(photo => photo.capture_id)).toEqual([latest.id, middle.id, oldest.id]);
+    expect((await cancel(latest.id)).body.removed_items).toBe(0);
+    expect((await items())[0]).toMatchObject({ quantity: 2, last_seen_batch_id: middle.id });
+    expect((await latestItemMedia(current.id)).crop_url).toContain(middle.photoId);
+    expect((await cancel(middle.id)).body.removed_items).toBe(0);
+    expect((await items())[0]).toMatchObject({ quantity: 1, last_seen_batch_id: oldest.id });
+    expect((await cancel(oldest.id)).body.removed_items).toBe(1);
+  });
+
+  it('keeps a manual correction when older offline evidence registers after its source was cancelled', async () => {
+    const latest = await seal((await create(crypto.randomUUID(), 'web-instant', '2026-11-06T12:00:00Z')).body.id);
+    await processNextCapture({ recognize: async () => recognized(latest.photoId, null, 3) });
+    const current = (await items())[0];
+    await query('UPDATE bin_items SET quantity=5 WHERE id=$1', [current.id]);
+    await cancel(latest.id);
+    const older = await seal((await create(crypto.randomUUID(), 'web-instant', '2026-11-06T10:00:00Z')).body.id);
+    await processNextCapture({ recognize: async () => recognized(older.photoId, current.id, 1) });
+    expect((await items())[0].quantity).toBe(5);
+    await cancel(older.id);
+    expect((await items())[0]).toMatchObject({ quantity: 5, last_seen_batch_id: null });
   });
 
   it.each(['older first', 'newer first'] as const)('keeps manual data when late older evidence and newer evidence are cancelled (%s)', async order => {

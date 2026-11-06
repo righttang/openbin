@@ -47,13 +47,13 @@ enum PhotoProcessor {
         if let index = drafts.firstIndex(where: { $0.id == draft.id }) { drafts[index] = draft }
         else { drafts.insert(draft, at: 0) }
     }
-    func enqueue(jpeg: Data, place: Place) throws {
+    func enqueue(jpeg: Data, place: Place, capturedAt: String? = nil) throws {
         if let storageError { throw APIError.message(storageError) }
         guard drafts.filter({ !$0.accepted && $0.state != "cancelled" }).count < 30 else { throw APIError.message("已有 30 张待上传照片，请联网后继续。") }
         let used = drafts.filter { !$0.accepted && $0.state != "cancelled" }.reduce(0) { $0 + $1.photo.size }
         guard used + jpeg.count <= 100 * 1024 * 1024 else { throw APIError.message("待上传照片已达 100 MB，请先完成上传。") }
         let id = UUID().uuidString.lowercased()
-        let draft = PhotoDraft(id: id, photo: .init(id: UUID().uuidString.lowercased(), sha256: SHA256.hash(data: jpeg).map { String(format: "%02x", $0) }.joined(), size: jpeg.count, order: 0), place: place, capturedAt: ISO8601DateFormatter().string(from: Date()))
+        let draft = PhotoDraft(id: id, photo: .init(id: UUID().uuidString.lowercased(), sha256: SHA256.hash(data: jpeg).map { String(format: "%02x", $0) }.joined(), size: jpeg.count, order: 0), place: place, capturedAt: capturedAt ?? captureTimestamp())
         try jpeg.write(to: photoURL(id), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
         do {
             try PhotoProcessor.jpeg(jpeg, longestSide: 240).write(to: thumbnailURL(id), options: .atomic)
@@ -127,7 +127,7 @@ enum PhotoProcessor {
     }
     private func pump() {
         guard enabled, storageError == nil else { return }
-        for draft in drafts where (retryAfter[draft.id] ?? .distantPast) <= Date() {
+        for draft in drafts.sorted(by: { $0.capturedAt < $1.capturedAt }) where (retryAfter[draft.id] ?? .distantPast) <= Date() {
             if draft.cancelRequested && draft.state != "cancelled" { launchCancellation(draft); continue }
             guard workers.count < 2, workers[draft.id] == nil, !draft.accepted, !draft.cancelRequested, ["waiting", "uploading", "failed"].contains(draft.state) else { continue }
             workers[draft.id] = Task { [weak self] in
@@ -164,8 +164,12 @@ enum PhotoProcessor {
             onChange?()
         } catch is CancellationError { /* Cancellation intent is already on disk. */ }
         catch {
-            if (error as? APIError)?.status == 410 { try? markCancelled(draft.id) }
-            else { recordError(draft.id, message: "照片已保存在手机，联网后会重试。") }
+            if (error as? APIError)?.code == "CAPTURE_CANCELLED" { try? markCancelled(draft.id) }
+            else if (error as? APIError)?.code == "CAPTURE_EXPIRED" {
+                guard var current = drafts.first(where: { $0.id == draft.id }), !current.cancelRequested else { return }
+                current.state = "expired"; current.error = "上传已过期，原照片仍保留。请点重试重新上传。"
+                do { try save(current) } catch { storageError = error.localizedDescription }
+            } else { recordError(draft.id, message: "照片已保存在手机，联网后会重试。") }
         }
     }
     private func markCancelled(_ id: String) throws {
@@ -177,7 +181,7 @@ enum PhotoProcessor {
     private func recordError(_ id: String, message: String) {
         guard var draft = drafts.first(where: { $0.id == id }), draft.state != "cancelled" else { return }
         draft.error = message
-        if !draft.accepted && !draft.cancelRequested { draft.state = "failed" }
+        if !draft.accepted && !draft.cancelRequested && draft.state != "expired" { draft.state = "failed" }
         do { try save(draft) } catch { storageError = "照片状态无法保存，请释放手机空间后重试。" }
         retryAfter[id] = Date().addingTimeInterval(15)
     }
@@ -203,7 +207,7 @@ enum PhotoProcessor {
             try await api.cancel(old.id, placeID: old.place.id)
             guard drafts.contains(where: { $0.id == old.id && !$0.cancelRequested }) else { return }
             // Save the replacement first. Disk failures retain the original for another retry.
-            try enqueue(jpeg: data, place: old.place)
+            try enqueue(jpeg: data, place: old.place, capturedAt: old.capturedAt)
             try markCancelled(old.id)
         } catch { recordError(old.id, message: "重新上传失败，原照片仍保留在手机。") }
     }
