@@ -1,22 +1,21 @@
-import { Camera, CheckCircle2, ChevronRight, ImagePlus, Loader2, MapPin, PackageSearch, Plus, Search, Upload, X } from 'lucide-react';
+import { Camera, CheckCircle2, ChevronRight, ImagePlus, Loader2, Plus, Upload, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
+import { useToast } from '@/components/ui/toast';
 import { addBin, useBinList } from '@/features/bins/useBins';
-import { useActiveLocation } from '@/features/locations/useLocations';
 import { apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { Events, notify } from '@/lib/eventBus';
+import { useNavigationGuard } from '@/lib/navigationGuard';
 import { useWarnOnUnload } from '@/lib/useWarnOnUnload';
 import { captureClient, finishCapture, getCaptureConfig, hasAcceptedBatch } from './captureClient';
 import { createCaptureId } from './captureCrypto';
 import { clearDraft, loadDrafts, saveDraft } from './captureQueue';
-import { displayCaptureDate as displayDate, ItemDetail, type ItemDetailData } from './ItemDetail';
-import { PhotoHistory } from './PhotoHistory';
+import { displayCaptureDate as displayDate } from './ItemDetail';
 import { preparePhoto } from './preparePhoto';
-import type { Capture, CaptureConfig, CaptureDraft, InventoryItem, LocalPhoto } from './types';
+import type { Capture, CaptureConfig, CaptureDraft, LocalPhoto } from './types';
 
-const cardClass = 'min-w-0 rounded-2xl border border-[var(--border-flat)] bg-[var(--bg-elevated)] p-5 sm:p-6';
 const inputClass = 'w-full rounded-xl border border-[var(--border-flat)] bg-[var(--bg-input)] px-3 py-3 text-base outline-none focus:ring-2 focus:ring-[var(--accent)]';
 const statusLabels: Record<Capture['state'], string> = {
   uploading: '等待完整上传', queued: '已上传 · 等待识别', processing: '后台识别中',
@@ -41,24 +40,21 @@ function PhotoPreview({ photo, remove, locked }: { photo: LocalPhoto; remove: ()
 
 export function RemindMePage() {
   const { user, activeLocationId } = useAuth();
-  const activeLocation = useActiveLocation();
+  const [params] = useSearchParams();
+  const { setGuard } = useNavigationGuard();
+  const { showToast } = useToast();
   const { bins, isLoading: binsLoading, refresh: refreshBins } = useBinList();
   const [config, setConfig] = useState<CaptureConfig | null>(null);
-  const [binId, setBinId] = useState('');
+  const [binId, setBinId] = useState(() => params.get('place') || localStorage.getItem('remindme-selected-place') || '');
   const [newBinName, setNewBinName] = useState('');
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState<CaptureDraft | null>(null);
   const [recoverable, setRecoverable] = useState<CaptureDraft[]>([]);
   const [capture, setCapture] = useState<Capture | null>(null);
-  const [detail, setDetail] = useState<ItemDetailData | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [storageWarning, setStorageWarning] = useState(false);
   const [progress, setProgress] = useState<{ received: number; total: number } | null>(null);
-  const [query, setQuery] = useState('');
-  const [items, setItems] = useState<InventoryItem[]>([]);
-  const [searching, setSearching] = useState(false);
-  const [searchError, setSearchError] = useState('');
   const [inventoryRevision, setInventoryRevision] = useState(0);
   const fileInput = useRef<HTMLInputElement>(null);
   const cameraInput = useRef<HTMLInputElement>(null);
@@ -100,8 +96,20 @@ export function RemindMePage() {
       setBinId(''); setCapture(null);
       return;
     }
-    if (!binId) setBinId(bins[0]?.id ?? '');
-  }, [bins, binId, pending, activeLocationId]);
+    if (!binsLoading && (!binId || !bins.some((bin) => bin.id === binId))) setBinId(bins[0]?.id ?? '');
+  }, [bins, binId, pending, activeLocationId, binsLoading]);
+
+  useEffect(() => {
+    if (binId) localStorage.setItem('remindme-selected-place', binId);
+  }, [binId]);
+
+  useEffect(() => {
+    setGuard({
+      shouldBlock: () => busy || (pending && storageWarning),
+      onBlocked: () => showToast({ message: busy ? '正在处理照片，请完成后再离开。' : '当前照片未能保存在浏览器中，请先完成上传。', variant: 'warning' }),
+    });
+    return () => setGuard(null);
+  }, [busy, pending, storageWarning, setGuard, showToast]);
 
   const refreshRecent = useCallback(async () => {
     if (!binId) return;
@@ -156,21 +164,6 @@ export function RemindMePage() {
     return () => { active = false; clearTimeout(timer); };
   }, [draftId, draftExpiresAt]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh search after the background worker changes inventory
-  useEffect(() => {
-    if (!activeLocationId) return;
-    const controller = new AbortController();
-    setSearching(true);
-    const timer = setTimeout(() => {
-      const params = new URLSearchParams({ location_id: activeLocationId, q: query.trim() });
-      apiFetch<{ items: InventoryItem[] }>(`/api/captures/inventory?${params}`, { signal: controller.signal })
-        .then((data) => { setItems(data.items); setSearchError(''); })
-        .catch(() => { if (!controller.signal.aborted) setSearchError('物品记录暂时无法加载，请重试。'); })
-        .finally(() => { if (!controller.signal.aborted) setSearching(false); });
-    }, 250);
-    return () => { clearTimeout(timer); controller.abort(); };
-  }, [activeLocationId, query, inventoryRevision]);
-
   async function persist(next: CaptureDraft) {
     setDraft(next);
     const saved = await saveDraft(next);
@@ -199,7 +192,7 @@ export function RemindMePage() {
       } });
       setCapture(next);
       await persist({ id, ownerId: user.id, binId, createdAt: next.captured_at, expiresAt: next.expires_at, sealed: false, photos: [] });
-    } catch (err) { setError(err instanceof Error ? err.message : '无法开始拍摄，请检查网络。'); }
+    } catch (err) { setError(err instanceof Error ? err.message : '无法开始扫描，请检查网络。'); }
     finally { setBusy(false); }
   }
 
@@ -258,50 +251,33 @@ export function RemindMePage() {
     } finally { setBusy(false); }
   }
 
-  const refreshInventory = useCallback(() => {
-    setInventoryRevision((value) => value + 1);
-    notify(Events.BINS);
-  }, []);
-
-  const historyDeleted = useCallback((deletedCaptureId: string) => {
-    setCapture((current) => current?.id === deletedCaptureId ? null : current);
-    setDetail(null);
-    refreshInventory();
-  }, [refreshInventory]);
-
   const selectedBin = bins.find((bin) => bin.id === (draft?.binId || binId));
   const accepted = capture && hasAcceptedBatch(capture);
   const canStart = !!config?.modelConfigured && !busy && !!binId && !pending;
   const missingPhotos = draft?.photos.some((photo) => !photo.blob);
   const visibleRecovery = recoverable.filter((entry) => entry.id !== draft?.id && bins.some((bin) => bin.id === entry.binId));
 
-  return <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-9">
-    <header className="mb-7 flex items-start justify-between gap-3">
-      <div><p className="mb-1 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--accent)]">RemindMe</p>
-        <h1 className="text-3xl font-semibold tracking-tight">记住东西放在哪</h1>
-        <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">拍下抽屉或收纳盒里的物品，下次直接搜索。</p></div>
-      {activeLocation && <span className="mt-1 hidden items-center gap-1.5 rounded-full border border-[var(--border-flat)] px-3 py-1.5 text-xs text-[var(--text-secondary)] sm:inline-flex"><MapPin className="h-3.5 w-3.5" />{activeLocation.name}</span>}
+  return <div className="mx-auto max-w-2xl">
+    <header className="mb-8">
+      <h1 className="text-3xl font-semibold tracking-tight">扫描</h1>
+      <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">选个地点，拍下物品。识别完成后就能查找。</p>
     </header>
-
-    <div className="flex flex-col gap-5">
-      <section className={cardClass} aria-labelledby="capture-heading">
-        <div className="mb-5 flex items-center gap-3"><div className="rounded-xl bg-[var(--bg-active)] p-2.5"><Camera className="h-5 w-5 text-[var(--accent)]" /></div><div><h2 id="capture-heading" className="text-lg font-semibold">记录一个位置</h2><p className="mt-0.5 text-xs text-[var(--text-secondary)]">整批识别，自动更新，不需要确认结果</p></div></div>
-
-        <label htmlFor="capture-location" className="mb-2 block text-sm font-medium">抽屉、盒子或搁板</label>
+    <section aria-label="拍照识别">
+        <label htmlFor="capture-location" className="mb-2 block text-sm font-medium">地点</label>
         <select id="capture-location" className={inputClass} value={draft?.binId || binId} onChange={(event) => { setBinId(event.target.value); setCapture(null); }} disabled={pending || busy || binsLoading}>
-          {!bins.length && <option value="">{binsLoading ? '加载中…' : '先创建一个收纳位置'}</option>}
-          {bins.map((bin) => <option key={bin.id} value={bin.id}>{bin.area_name ? `${bin.area_name} / ` : ''}{bin.name}</option>)}
+          {!bins.length && <option value="">{binsLoading ? '加载中…' : '先添加一个地点'}</option>}
+          {bins.map((bin) => <option key={bin.id} value={bin.id}>{bin.name}</option>)}
         </select>
-        {!pending && <button type="button" onClick={() => setCreating(!creating)} className="mt-2 inline-flex items-center gap-1 py-1 text-sm text-[var(--accent)]"><Plus className="h-4 w-4" />创建收纳位置</button>}
-        {creating && !pending && <form className="mt-2 flex gap-2" onSubmit={createStorage}><input aria-label="新收纳位置名称" value={newBinName} onChange={(event) => setNewBinName(event.target.value)} placeholder="例如：书房 / 书柜 / 抽屉 A" className={inputClass} maxLength={100} required /><Button type="submit" disabled={busy || !activeLocationId || !newBinName.trim()}>创建</Button></form>}
-        {!config?.modelConfigured && config && <p className="mt-4 rounded-xl bg-amber-500/10 p-3 text-sm text-[var(--text-secondary)]">识别服务尚未配置。请先设置服务器的 LiteLLM 地址、模型和密钥。</p>}
+        {!pending && <button type="button" onClick={() => setCreating(!creating)} className="mt-2 inline-flex items-center gap-1 py-1 text-sm text-[var(--accent)]"><Plus className="h-4 w-4" />添加地点</button>}
+        {creating && !pending && <form className="mt-2 flex gap-2" onSubmit={createStorage}><input aria-label="新地点名称" value={newBinName} onChange={(event) => setNewBinName(event.target.value)} placeholder="例如：书桌抽屉" className={inputClass} maxLength={100} required /><Button type="submit" disabled={busy || !activeLocationId || !newBinName.trim()}>添加</Button></form>}
+        {!config?.modelConfigured && config && <p className="mt-4 rounded-xl bg-amber-500/10 p-3 text-sm text-[var(--text-secondary)]">识别服务暂时未就绪，请稍后重试。</p>}
 
         {visibleRecovery.length > 0 && <div className="mt-4 space-y-2"><p className="text-sm font-medium">继续未完成的拍摄</p>{visibleRecovery.map((saved) => <button key={saved.id} type="button" disabled={busy || pending} onClick={() => resumeCapture(saved)} className="flex w-full items-center justify-between gap-2 rounded-xl border border-[var(--border-flat)] p-3 text-left text-sm"><span>{bins.find((bin) => bin.id === saved.binId)?.name} · {saved.photos.length} 张照片<br /><span className="text-xs text-[var(--text-secondary)]">{displayDate(saved.createdAt)}</span></span><ChevronRight className="h-4 w-4" /></button>)}</div>}
 
-        {!pending && <div className="mt-5"><Button fullWidth onClick={startCapture} disabled={!canStart}><Camera className="mr-2 h-4 w-4" />{busy ? '正在准备…' : '开始新的拍摄'}</Button><p className="mt-3 text-xs leading-5 text-[var(--text-secondary)]">先拍一张全景，再补充细节。每批最多 {config?.maxPhotos ?? 20} 张；重复角度由模型合并，数量不确定时会标为未知。</p></div>}
+        {!pending && <div className="mt-5"><Button fullWidth onClick={startCapture} disabled={!canStart}><Camera className="mr-2 h-4 w-4" />{busy ? '正在准备…' : '开始新的拍摄'}</Button><p className="mt-3 text-xs leading-5 text-[var(--text-secondary)]">先拍一张全景，再补充细节。一次最多 {config?.maxPhotos ?? 20} 张。不同角度拍到的同一物品会自动合并。</p></div>}
 
         {pending && draft && <div className="mt-5 space-y-4">
-          <div className="flex items-center justify-between text-sm"><span className="font-medium">第 {capture?.sequence ?? '—'} 批拍摄</span><span className="text-[var(--text-secondary)]">{draft.photos.length} / {config?.maxPhotos ?? 20} 张</span></div>
+          <div className="flex items-center justify-between text-sm"><span className="font-medium">本次扫描</span><span className="text-[var(--text-secondary)]">{draft.photos.length} / {config?.maxPhotos ?? 20} 张</span></div>
           <input ref={cameraInput} type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" capture="environment" className="hidden" onChange={(event) => addFiles(event.target.files)} />
           <input ref={fileInput} type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" multiple className="hidden" onChange={(event) => addFiles(event.target.files)} />
           <input ref={recoverInput} type="file" accept="image/*" multiple className="hidden" onChange={(event) => addFiles(event.target.files, true)} />
@@ -317,22 +293,8 @@ export function RemindMePage() {
         </div>}
 
         {error && <p role="alert" className="mt-4 rounded-xl bg-red-500/10 p-3 text-sm text-red-700 dark:text-red-300">{error}</p>}
-        {accepted && <div aria-live="polite" className="mt-5 rounded-xl border border-emerald-600/20 bg-emerald-500/10 p-4"><div className="flex items-center gap-2 font-medium"><CheckCircle2 className="h-5 w-5 text-emerald-600" />{statusLabels[capture.state]}</div><p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">{capture.state === 'failed' ? '本次未更新物品，可重新拍摄。临时照片将在保留期限内删除。' : capture.state === 'superseded' ? '较新的拍摄记录已生效，本批不会覆盖它。' : capture.state === 'applied' ? capture.cleanup_completed_at ? '物品已记录，照片预览和详情可在识别历史中查看。' : '物品已记录，照片详情正在整理。' : '整批照片已由服务器接收。可以离开页面或锁屏，识别会在后台继续。'}</p></div>}
+        {accepted && <div aria-live="polite" className="mt-5 rounded-xl border border-emerald-600/20 bg-emerald-500/10 p-4"><div className="flex items-center gap-2 font-medium"><CheckCircle2 className="h-5 w-5 text-emerald-600" />{statusLabels[capture.state]}</div><p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">{capture.state === 'failed' ? '本次未更新物品，可重新拍摄。临时照片将在保留期限内删除。' : capture.state === 'superseded' ? '较新的拍摄记录已生效，本批不会覆盖它。' : capture.state === 'applied' ? capture.cleanup_completed_at ? '物品已记录，照片预览和详情可在历史中查看。' : '物品已记录，照片详情正在整理。' : '整批照片已由服务器接收。可以离开页面或锁屏，识别会在后台继续。'}</p></div>}
+        {accepted && <Link to={`/history?place=${encodeURIComponent(capture.bin_id)}`} className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-[var(--accent)]">查看本次识别记录<ChevronRight className="h-4 w-4" /></Link>}
       </section>
-
-    <PhotoHistory binId={binId} locationId={activeLocationId} refreshKey={inventoryRevision}
-      onResultsChanged={refreshInventory} onDeleted={historyDeleted} onSelectItem={setDetail} />
-
-      <section className={cardClass} aria-labelledby="find-heading">
-        <div className="mb-5 flex items-center gap-3"><div className="rounded-xl bg-[var(--bg-active)] p-2.5"><PackageSearch className="h-5 w-5 text-[var(--accent)]" /></div><div><h2 id="find-heading" className="text-lg font-semibold">东西放在哪？</h2><p className="mt-0.5 text-xs text-[var(--text-secondary)]">按名称、描述或别名查找</p></div></div>
-        <div className="relative"><Search className="absolute left-3 top-3.5 h-5 w-5 text-[var(--text-tertiary)]" /><input aria-label="搜索物品" data-shortcut-search value={query} onChange={(event) => setQuery(event.target.value)} placeholder="例如：USB-C 线、螺丝刀、电池" className={`${inputClass} pl-10`} /></div>
-        <div className="mt-4" aria-live="polite">
-          {searchError ? <p className="text-sm text-red-600">{searchError}</p> : searching ? <p className="py-6 text-center text-sm text-[var(--text-secondary)]">正在查找…</p> : items.length === 0 ? <div className="px-3 py-10 text-center"><PackageSearch className="mx-auto mb-3 h-9 w-9 text-[var(--text-tertiary)]" /><p className="text-sm font-medium">{query ? '还没有找到匹配的物品' : '从第一个抽屉开始'}</p><p className="mt-2 text-xs leading-5 text-[var(--text-secondary)]">{query ? '试试其他名称或更短的关键词。' : '完成拍摄后，识别出的物品和最后看到的位置会自动出现在这里。'}</p></div>
-            : <ul className="divide-y divide-[var(--border-flat)]">{items.map((item) => <li key={item.id} className="py-4"><button type="button" aria-label={`查看${item.name}详情`} className="flex w-full items-start justify-between gap-3 rounded-lg text-left hover:text-[var(--accent)]" onClick={() => setDetail({ name: item.name, description: item.description, aliases: item.aliases, quantity: item.quantity, location: [item.location_name, item.area_name, item.bin_name].filter(Boolean).join(' / '), binId: item.bin_id, seenAt: item.last_seen_at, cropUrl: item.crop_url, previewUrl: item.photo_preview_url })}><div className="min-w-0"><p className="font-medium">{item.name}<ChevronRight className="ml-1 inline h-3.5 w-3.5 text-[var(--text-tertiary)]" /></p>{item.description && <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">{item.description}</p>}</div><span className="shrink-0 rounded-full bg-[var(--bg-active)] px-2 py-1 text-xs text-[var(--text-secondary)]">{item.quantity === null ? '数量未知' : `数量 ${item.quantity}`}</span></button><Link to={`/bin/${item.bin_id}`} className="mt-2 inline-flex items-center gap-1 text-sm text-[var(--accent)]"><MapPin className="h-3.5 w-3.5" />{[item.location_name, item.area_name, item.bin_name].filter(Boolean).join(' / ')}</Link><p className="mt-1 text-xs text-[var(--text-secondary)]">{item.observation_state === 'not_seen_in_latest_capture' ? '最近拍摄未见 · 最后看到：' : '最后看到：'}{displayDate(item.last_seen_at)}</p></li>)}</ul>}
-        </div>
-      </section>
-    </div>
-
-    <ItemDetail item={detail} onClose={() => setDetail(null)} />
   </div>;
 }

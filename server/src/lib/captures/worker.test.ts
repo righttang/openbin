@@ -83,9 +83,9 @@ describe('durable capture recognition', () => {
     expect(fs.existsSync(batch.directory)).toBe(false);
     const media = getDb().prepare('SELECT crop_jpeg FROM observation_photos').get() as { crop_jpeg: Buffer };
     expect((await sharp(media.crop_jpeg).metadata()).format).toBe('jpeg');
-    expect(listPhotoHistory(userId, binId, null)[0].items[0].crop_url).toBeTruthy();
+    expect((await listPhotoHistory(userId, binId, null))[0].items[0].crop_url).toBeTruthy();
     await dismissPhotoHistory(batch.id, batch.photos[0].id, userId);
-    expect(listPhotoHistory(userId, binId, null)).toEqual([]);
+    expect(await listPhotoHistory(userId, binId, null)).toEqual([]);
     expect(getDb().prepare('SELECT COUNT(*) AS n FROM bin_items WHERE deleted_at IS NULL').get()).toEqual({ n: 0 });
     expect(getDb().prepare('SELECT crop_jpeg FROM observation_photos').get()).toEqual({ crop_jpeg: null });
   });
@@ -99,7 +99,7 @@ describe('durable capture recognition', () => {
     expect(job(batch.jobId).state).toBe('applied');
     expect(getDb().prepare('SELECT * FROM bin_items').all()).toEqual([]);
     expect(getDb().prepare('SELECT * FROM observations').all()).toEqual([]);
-    expect(listPhotoHistory(userId, binId, null)).toEqual([]);
+    expect(await listPhotoHistory(userId, binId, null)).toEqual([]);
     expect(fs.existsSync(batch.directory)).toBe(false);
   });
 
@@ -205,6 +205,7 @@ describe('durable capture recognition', () => {
     const running = processNextCapture({ recognize: () => new Promise((resolve) => { finish = resolve; }) });
     expect(await processNextCapture({ recognize: async () => recognized(second.photos.map((p) => p.id)) })).toBe(false);
     expect(job(second.jobId).state).toBe('queued');
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
     finish(recognized(first.photos.map((p) => p.id)));
     await running;
     expect(job(first.jobId).state).toBe('applied');

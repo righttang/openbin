@@ -13,6 +13,7 @@ interface PhotoHistoryProps {
   onResultsChanged: () => void;
   onDeleted: (captureId: string) => void;
   onSelectItem: (item: ItemDetailData) => void;
+  compactHeading?: boolean;
 }
 
 const inProgress = (state: PhotoHistoryRecord['state']) => ['uploading', 'queued', 'processing'].includes(state);
@@ -29,7 +30,7 @@ function Preview({ photo }: { photo: PhotoHistoryRecord }) {
     : <div className="flex aspect-[4/3] flex-col items-center justify-center gap-2 bg-[var(--bg-active)] p-4 text-center text-xs text-[var(--text-secondary)]"><ImageOff className="h-7 w-7 text-[var(--text-tertiary)]" /><span>暂无照片预览</span><span>{inProgress(photo.state) ? '照片上传后显示预览' : '照片未保留或已清理，文字结果仍可查看'}</span></div>;
 }
 
-export function PhotoHistory({ binId, locationId, refreshKey, onResultsChanged, onDeleted, onSelectItem }: PhotoHistoryProps) {
+export function PhotoHistory({ binId, locationId, refreshKey, onResultsChanged, onDeleted, onSelectItem, compactHeading = false }: PhotoHistoryProps) {
   const [photos, setPhotos] = useState<PhotoHistoryRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -43,7 +44,7 @@ export function PhotoHistory({ binId, locationId, refreshKey, onResultsChanged, 
   // Each polling request belongs to this selected location, never to an old selection.
   // biome-ignore lint/correctness/useExhaustiveDependencies: upload completion and deletion explicitly refresh history
   useEffect(() => {
-    if (!binId || !locationId) { setPhotos([]); setLoading(false); return; }
+    if (!locationId) { setPhotos([]); setLoading(false); return; }
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     const scope = `${locationId}/${binId}`;
@@ -55,7 +56,8 @@ export function PhotoHistory({ binId, locationId, refreshKey, onResultsChanged, 
     setLoading(true);
     const fetchHistory = async () => {
       try {
-        const params = new URLSearchParams({ bin_id: binId, location_id: locationId });
+        const params = new URLSearchParams({ location_id: locationId });
+        if (binId) params.set('bin_id', binId);
         const data = await apiFetch<{ photos: PhotoHistoryRecord[] }>(`/api/captures/history?${params}`, { signal: controller.signal });
         if (controller.signal.aborted) return;
         const next = (data.photos ?? []).filter((photo) => !removed.current.has(photoKey(photo)));
@@ -89,9 +91,9 @@ export function PhotoHistory({ binId, locationId, refreshKey, onResultsChanged, 
     } finally { setDeleting((keys) => keys.filter((entry) => entry !== key)); }
   }, [onDeleted, showToast]);
 
-  return <section className="min-w-0 rounded-2xl border border-[var(--border-flat)] bg-[var(--bg-elevated)] p-5 sm:p-6" aria-labelledby="photo-history-heading">
+  return <section className="min-w-0" aria-labelledby={compactHeading ? undefined : 'photo-history-heading'} aria-label={compactHeading ? '照片识别历史' : undefined}>
     <div className="mb-5 flex items-start justify-between gap-3">
-      <div><h2 id="photo-history-heading" className="flex items-center gap-2 text-lg font-semibold"><Clock3 className="h-5 w-5 text-[var(--accent)]" />照片识别历史</h2><p className="mt-1.5 text-xs leading-5 text-[var(--text-secondary)]">每张照片单独查看结果，点击物品看详情。删除照片记录会撤掉它独有的识别结果。</p></div>
+      <div>{!compactHeading && <h2 id="photo-history-heading" className="flex items-center gap-2 text-lg font-semibold"><Clock3 className="h-5 w-5 text-[var(--accent)]" />照片识别历史</h2>}<p className="mt-1.5 text-xs leading-5 text-[var(--text-secondary)]">点叉删除照片记录及其独有结果，其他照片里的物品会保留。</p></div>
       <button type="button" aria-label="刷新识别历史" title="刷新识别历史" className="shrink-0 rounded-lg p-2 text-[var(--text-secondary)] hover:bg-[var(--bg-active)]" onClick={() => setRetry((value) => value + 1)}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /></button>
     </div>
     {error && <div role="alert" className="mb-4 flex flex-wrap items-center gap-2 text-sm text-red-600"><span>{error}</span><Button size="sm" variant="outline" onClick={() => setRetry((value) => value + 1)}>重试</Button></div>}
@@ -105,7 +107,7 @@ export function PhotoHistory({ binId, locationId, refreshKey, onResultsChanged, 
               <button type="button" aria-label={`删除照片记录 ${index + 1}`} title="删除这张照片记录及其独有的识别结果" disabled={isDeleting} onClick={() => void remove(photo)} className="absolute right-2 top-2 rounded-full bg-black/65 p-2.5 text-white shadow-sm hover:bg-black/80 disabled:opacity-50">{isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />}</button>
             </div>
             <div className="p-4"><div className="flex items-center justify-between gap-2 text-xs"><span className="inline-flex items-center gap-1.5 font-medium text-[var(--text-primary)]">{inProgress(photo.state) ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : photo.state === 'applied' ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" /> : null}{labels[photo.state]}</span><span className="text-[var(--text-secondary)]">{inProgress(photo.state) ? '结果待更新' : `${photo.items.length} 类物品`}</span></div>
-              <p className="mt-2 truncate text-sm font-medium">{photo.bin_name}</p><p className="mt-1 text-xs text-[var(--text-secondary)]">{displayCaptureDate(photo.captured_at)} · 第 {photo.sequence} 批</p>
+              <p className="mt-2 truncate text-sm font-medium">{photo.bin_name}</p><p className="mt-1 text-xs text-[var(--text-secondary)]">{displayCaptureDate(photo.captured_at)}</p>
               {photo.items.length ? <ul className="mt-3 divide-y divide-[var(--border-flat)]">{photo.items.map((item) => <li key={item.observation_id}><button type="button" aria-label={`查看${item.name}详情`} disabled={isDeleting} onClick={() => onSelectItem({ name: item.name, description: item.description, aliases: item.aliases, quantity: item.quantity, location: photo.bin_name, binId: photo.bin_id, seenAt: photo.captured_at, cropUrl: item.crop_url, previewUrl: photo.preview_url })} className="flex w-full items-center gap-2 py-2.5 text-left text-sm hover:text-[var(--accent)] disabled:opacity-50"><span className="min-w-0 flex-1 break-words">{item.name}</span><span className="shrink-0 text-xs text-[var(--text-secondary)]">{item.quantity === null ? '数量未知' : `× ${item.quantity}`}</span><ChevronRight className="h-3.5 w-3.5 shrink-0 text-[var(--text-tertiary)]" /></button></li>)}</ul>
                 : <p className="mt-3 text-xs leading-5 text-[var(--text-secondary)]">{inProgress(photo.state) ? '识别完成后，结果会自动显示在这里。' : photo.state === 'failed' || photo.state === 'expired' ? '这张照片没有产生识别结果，可以重新拍摄。' : '这张照片没有识别到物品。'}</p>}
             </div>

@@ -1,0 +1,37 @@
+# Local development and automated tests only. Never use these credentials in production.
+# Start: docker compose -f docker-compose.remindme.test.yml up -d --wait
+# App DATABASE_URL: postgres://openbin_test:openbin_test@127.0.0.1:5433/remindme_local_test
+#
+# Automated tests use separate databases so they can reset their schemas safely:
+#   cd server && npx vitest run --config vitest.pg.config.ts
+#   cd server && npx vitest run --config vitest.captures-pg.config.ts
+#   MIGRATION_TEST_DATABASE_URL=postgres://openbin_test:openbin_test@127.0.0.1:5433/remindme_migration_test node --test server/scripts/migrate-sqlite-to-postgres.test.mjs
+#
+# `down` preserves local data. `down -v` deletes all databases in this test instance.
+# Initialization SQL runs only when the named volume is empty.
+name: remindme-test
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: remindme-postgres-test
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5433:5432"
+    environment:
+      POSTGRES_USER: openbin_test
+      POSTGRES_PASSWORD: openbin_test
+      POSTGRES_DB: remindme_local_test
+    volumes:
+      - postgres-test-data:/var/lib/postgresql/data
+      - ./docker/postgres-test/01-create-databases.sql:/docker-entrypoint-initdb.d/01-create-databases.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "openbin_test", "-d", "remindme_local_test"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+volumes:
+  postgres-test-data:
+    name: remindme-postgres-test-data

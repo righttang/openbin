@@ -59,7 +59,7 @@ export function ItemDetail({ item, onClose }: { item: ItemDetailData | null; onC
           {item.aliases.map((alias) => <li key={alias} className="rounded-full bg-[var(--bg-active)] px-2.5 py-1 text-xs text-[var(--text-secondary)]">{alias}</li>)}
         </ul>}
         <div className="mt-5 border-t border-[var(--border-flat)] pt-4">
-          <Link to={`/bin/${item.binId}`} onClick={onClose} className="inline-flex items-center gap-1.5 text-sm text-[var(--accent)]"><MapPin className="h-4 w-4" />{item.location}</Link>
+          <Link to={`/find?place=${encodeURIComponent(item.binId)}`} onClick={onClose} className="inline-flex items-center gap-1.5 text-sm text-[var(--accent)]"><MapPin className="h-4 w-4" />{item.location}</Link>
           <p className="mt-2 text-xs text-[var(--text-secondary)]">最后看到：{displayCaptureDate(item.seenAt)}</p>
         </div>
       </>}

@@ -2,7 +2,7 @@
 
 家中物品查找工具：选一个抽屉、盒子或架子，拍一组照片，后台自动更新物品记录。之后按名称、描述或别名搜索，查看位置、最后看到的时间和数量。
 
-第一版基于 [OpenBin](https://github.com/akifbayram/openbin/tree/7ffc01a086c8d8c52afcb8db2faed50b93a3d3d5)，基线固定为 `7ffc01a086c8d8c52afcb8db2faed50b93a3d3d5`。保留家庭位置、区域、收纳容器和搜索功能，本地版无需登录和注册。[原项目说明](README.upstream.md)、[许可证](LICENSE) 和代码中的版权声明保留；本项目使用自托管社区版本。详细设计见 [PLAN.md](PLAN.md)。
+第一版基于 [OpenBin](https://github.com/akifbayram/openbin/tree/7ffc01a086c8d8c52afcb8db2faed50b93a3d3d5)，基线固定为 `7ffc01a086c8d8c52afcb8db2faed50b93a3d3d5`。界面只提供扫描、查找、地点管理和照片历史四个平级页面，无需登录和注册。[原项目说明](README.upstream.md)、[许可证](LICENSE) 和代码中的版权声明保留；本项目使用自托管社区版本。详细设计见 [PLAN.md](PLAN.md)。
 
 ## 本地运行
 
@@ -16,9 +16,14 @@ npm run setup:local
 npm run dev:all
 ```
 
-打开 <http://localhost:5173/remindme> 即可使用，不需要注册或登录。首次运行自动创建“我的家”，然后添加收纳容器。OpenBin 中的 Location 表示家庭或场所，Area 表示房间或柜子，Bin 表示本次拍摄的抽屉、盒子或架子。新拍摄流程从 RemindMe 入口进入。
+打开 <http://localhost:5173> 即可使用，不需要注册或登录。先添加一个地点，例如“书桌抽屉”，然后拍照。地点是平级列表，不需要创建家庭、区域或多层容器。
 
-`REMINDME_LOCAL_MODE=true` 启用共享家庭模式：所有能够访问服务的设备共用同一份物品数据，账号管理和登录注册接口关闭，写请求仍校验 CSRF。仅在 `SELF_HOSTED=true` 时生效。已有数据可通过 `REMINDME_LOCAL_USER_ID` 指定原用户 ID 继续使用；未指定时创建独立本地档案，不删除或合并旧账号。此模式用于受信任的家庭局域网。需要恢复账号访问时设置 `REMINDME_LOCAL_MODE=false` 并重启。
+- **扫描** `/scan`：选地点、拍照并提交后台识别。
+- **查找** `/find`：按名称、描述或别名搜索，查看地点与物品裁剪图。
+- **地点** `/places`：新增、改名和删除地点。
+- **历史** `/history`：按照片查看结果、筛选地点、删除不需要的记录。
+
+`REMINDME_LOCAL_MODE=true` 启用共享家庭模式：所有能够访问服务的设备共用同一份物品数据，账号管理和登录注册接口关闭，写请求仍校验 CSRF。仅在 `SELF_HOSTED=true` 时生效。已有数据可通过 `REMINDME_LOCAL_USER_ID` 指定原用户 ID 继续使用；未指定时创建独立本地档案，不删除或合并旧账号。此模式用于受信任的家庭局域网。
 
 `.env` 不进入 Git，初始化不会覆盖已有配置。服务端读取密钥，浏览器不会获得它。本地数据库位于 `server/data/remindme.db`，临时照片位于 `server/capture-scratch/`。开发命令从 `server/` 启动 API，因此 `.env` 中的相对存储路径以该目录为准。
 
@@ -43,9 +48,32 @@ ipconfig getifaddr en0
 
 本地 HTTP 支持照片选择和系统拍照上传；“拍照”使用文件选择器的相机提示，由浏览器决定是否直接打开系统相机。它不提供需要安全上下文的网页内实时相机。UUID 始终使用安全随机数；SHA-256 在 WebCrypto 不可用时使用固定版本的 `@noble/hashes`，保留 CSRF 校验。本方式仅供受信任 Wi-Fi 下本地测试；正式访问仍使用 HTTPS。
 
+## 本地 Postgres 测试库
+
+Tomubuntu 使用独立的生产数据库；本地测试不会连接生产库。本地开发可启动持久化的 Postgres 16：
+
+```sh
+docker compose -f docker-compose.remindme.test.yml up -d --wait
+```
+
+本地 `.env` 设置：
+
+```dotenv
+DATABASE_URL=postgres://openbin_test:openbin_test@127.0.0.1:5433/remindme_local_test
+```
+
+然后运行 `npm run dev:all`。测试数据库只绑定本机 5433 端口；数据保存在 `remindme-postgres-test-data` volume，普通停止、重启不会清空。初次启动还会创建 `openbin_test`、`remindme_capture_test`、`remindme_migration_test`，供自动化测试重建；日常开发数据放在 `remindme_local_test`，不使用这些会被清理的测试库。
+
+```sh
+# PostgreSQL 上的完整拍照、识别、历史和并发验证
+REMINDME_TEST_DATABASE_URL=postgres://openbin_test:openbin_test@127.0.0.1:5433/remindme_capture_test npm --prefix server test -- --config vitest.captures-pg.config.ts
+# SQLite → PostgreSQL 导入、内容校验与回滚测试
+MIGRATION_TEST_DATABASE_URL=postgres://openbin_test:openbin_test@127.0.0.1:5433/remindme_migration_test node --test server/scripts/migrate-sqlite-to-postgres.test.mjs
+```
+
 ## 拍摄和恢复
 
-1. 选择收纳容器，在线开始新一批拍摄，服务端先分配顺序号。
+1. 选择地点，在线开始新一批拍摄，服务端先分配顺序号。
 2. 添加全景及细节照片，每批最多 20 张，单张上传不超过 5 MiB。
 3. 完成拍摄并上传。上传过程中保持页面打开；Safari 锁屏或退出可能中断尚未完成的上传。
 4. 只有服务器接受完整批次后，页面才显示可以离开。识别在服务端继续，不需要 Apply 或确认。
@@ -53,7 +81,7 @@ ipconfig getifaddr en0
 
 支持 JPEG、PNG、WebP。照片在浏览器和服务端按方向旋转并缩小；无法解码的 HEIC 请转成 JPEG，或在 iPhone 相机里使用“兼容性最佳”。浏览器通过有容量限制的 IndexedDB 保存待上传照片；重新打开后按原批次和照片 ID 恢复。浏览器清理本地存储时，需要重新选择缺失的照片。
 
-成功或被更新批次取代后，立即删除服务端临时原图。删除失败会重试；上传未完成和最终识别失败的原图默认 1 小时过期。照片历史另保留压缩预览和物品裁剪图，存入 SQLite，随数据库一起备份；不保存 base64 或模型原始响应。
+成功或被更新批次取代后，立即删除服务端临时原图。删除失败会重试；上传未完成和最终识别失败的原图默认 1 小时过期。照片历史另保留压缩预览和物品裁剪图，存入数据库（PostgreSQL 或 SQLite），随数据库一起备份；不保存 base64 或模型原始响应。
 
 ### 照片识别历史和详情
 
@@ -61,11 +89,11 @@ ipconfig getifaddr en0
 
 点历史卡片右上角的叉会删除该照片记录和保留的图片，并撤掉只由它支持的识别结果。同一物品如果还有其他照片记录，继续保留，恢复为剩余记录中的最近信息；手动录入或后来手动修改的物品不被无条件覆盖。删除正在识别的照片也不会让其结果在任务结束后重新出现。
 
-预览最长边 960 像素、单张不超过 256 KiB；物品裁剪最长边 512 像素、单张不超过 128 KiB。`CAPTURE_HISTORY_QUOTA_BYTES` 默认给历史图片 512 MiB 预算；达到预算后继续保留文字结果，不自动删除旧记录。删除图片释放的是可复用的 SQLite 空间，数据库文件不一定立刻缩小。
+预览最长边 960 像素、单张不超过 256 KiB；物品裁剪最长边 512 像素、单张不超过 128 KiB。`CAPTURE_HISTORY_QUOTA_BYTES` 默认给历史图片 512 MiB 预算；达到预算后继续保留文字结果，不自动删除旧记录。删除图片后数据库空间可被后续写入复用，存储文件不一定立刻缩小。
 
 ## Capture API
 
-本地共享模式无需登录：先 GET `/api/auth/me` 获取 `openbin-csrf` cookie，写请求同时携带该 cookie 和同值的 `X-CSRF-Token` 请求头。关闭本地模式后需要登录 cookie（写请求携带 CSRF token）或应用 API key。LiteLLM Key 仅供服务端调用模型，不能用作应用 API key。v1 使用单进程 SQLite。
+本地共享模式无需登录：先 GET `/api/auth/me` 获取 `openbin-csrf` cookie，写请求同时携带该 cookie 和同值的 `X-CSRF-Token` 请求头。关闭本地模式后需要登录 cookie（写请求携带 CSRF token）或应用 API key。LiteLLM Key 仅供服务端调用模型，不能用作应用 API key。支持 PostgreSQL 和 SQLite；临时原图仍由单个应用实例管理。
 
 | 接口 | 内容 |
 | --- | --- |
@@ -121,13 +149,39 @@ docker compose -f docker-compose.remindme.yml up --build -d --wait
 docker compose -f docker-compose.remindme.yml ps
 ```
 
-打开 `http://<服务器内网 IP>:1453/remindme`。默认只绑定 `127.0.0.1`，供同机反向代理使用；需要手机直接访问时，将 `HOST_BIND_IP` 设为服务器局域网地址。可信 HTTPS 入口使用 `COOKIE_SECURE=true`，`CORS_ORIGIN` 设为实际 HTTPS 地址；代理配置同时遵循上游的 `TRUST_PROXY` 设置。
+打开 `http://<服务器内网 IP>:1453`。默认只绑定 `127.0.0.1`，供同机反向代理使用；需要手机直接访问时，将 `HOST_BIND_IP` 设为服务器局域网地址。可信 HTTPS 入口使用 `COOKIE_SECURE=true`，`CORS_ORIGIN` 设为实际 HTTPS 地址；代理配置同时遵循上游的 `TRUST_PROXY` 设置。
 
 Compose 使用独立的 `remindme_data` 数据 volume 和 `remindme_scratch` 临时图片 volume，容器根文件系统只读，支持健康检查、自动重启和优雅停止。`docker compose down` 保留数据；不要使用 `down -v`，除非确实要清空实例。更新时重新构建并执行 `up -d --wait` 即可。
 
 新实例不需要设置 `REMINDME_LOCAL_USER_ID`，会自动创建“我的家”。从 Mac 迁移已有记录时，应复制一致的 SQLite 备份到数据 volume 的 `/data/remindme.db`，并保留对应的 `REMINDME_LOCAL_USER_ID` 和 `JWT_SECRET`。不要复制正在写入的数据库文件而漏掉 WAL；使用 SQLite 备份或先停止应用再复制。
 
-当前拍摄、历史和裁剪功能只支持 SQLite 与单应用进程，不能通过设置 `DATABASE_URL` 直接改为 PostgreSQL。该 Compose 明确清空 `DATABASE_URL`，防止误连共享数据库；SQLite volume 必须放在服务器本地磁盘。
+PostgreSQL 模式可以复用已有服务，使用独立的 RemindMe 数据库和应用账号。新数据库设置 `DATABASE_URL` 即可；已有 SQLite 数据必须先迁移，不能仅修改连接串。省略 `DATABASE_URL` 时继续使用 SQLite，SQLite volume 必须放在本地磁盘。两种数据库都只运行一个应用实例，因为临时原图仍存放在该实例的 scratch volume。
+
+连接同一台 Docker 主机上已有的 Postgres：
+
+```dotenv
+DATABASE_URL=postgres://remindme_app:YOUR_PASSWORD@postgres:5432/remindme
+POSTGRES_NETWORK=shared-services
+```
+
+```sh
+docker compose -f docker-compose.remindme.yml -f docker-compose.remindme.postgres.yml up --build -d --wait
+```
+
+覆盖文件只将应用加入指定的已有 Docker 网络，不创建、重启或替换 Postgres。数据库保存物品、照片历史和裁剪图，`remindme_data` volume 继续保留附件及原 SQLite 数据，`remindme_scratch` 仍只保存临时原图。
+
+### 已有 SQLite 数据的可选迁移
+
+新生产实例可以直接从空数据库开始，不必导入测试记录。需要保留旧数据时，先停止源应用并制作一致的 SQLite 备份，再对**空的专用目标数据库**运行导入工具。不要先启动目标应用，否则初始化数据会使导入被拒绝。
+
+```sh
+# DATABASE_URL 从安全的本地环境或 env file 提供，不写入脚本
+node server/scripts/migrate-sqlite-to-postgres.mjs --source /path/snapshot.db --database-name remindme --dry-run --report /path/dry-run.json
+# 仅在验证成功后提交；使用另一个报告路径
+node server/scripts/migrate-sqlite-to-postgres.mjs --source /path/snapshot.db --database-name remindme --apply --report /path/applied.json
+```
+
+镜像中同一工具位于 `/app/scripts/migrate-sqlite-to-postgres.mjs`。默认完整试导入后回滚；目标已有任何数据时拒绝操作。导入保留 ID、关联、预览和裁剪二进制，并逐表验证数量及内容 SHA-256。文件目录中的普通附件、头像和未完成原图另行迁移；完成切换前保留源数据库及旧配置。
 
 备份数据库和安全保存的配置，排除整个 `remindme_scratch` volume。数据库备份包含历史预览和裁剪图；已有备份中的图片不会随在线记录删除而自动抹除。恢复后缺失输入的未完成任务会失败，不会生成虚假库存。应用备份保留 OpenBin 的普通附件目录；RemindMe 临时原图不放入该目录。
 

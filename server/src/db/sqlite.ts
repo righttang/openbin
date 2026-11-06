@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import Database from 'better-sqlite3';
 import { deserializeRow } from './shared.js';
 import type { DatabaseEngine, QueryResult, TxQueryFn } from './types.js';
@@ -175,6 +176,20 @@ function runQuery<T>(sql: string, params?: unknown[]): QueryResult<T> {
  * initSqlite() must be called before any engine methods are used.
  */
 export function createSqliteEngine(): DatabaseEngine {
+  // One SQLite connection must not serve another request while an async
+  // transaction is suspended at await. Queue both transactions and outside
+  // queries; only queries from the owning async context can use the connection.
+  const transactionContext = new AsyncLocalStorage<{ active: boolean }>();
+  let queue = Promise.resolve();
+  let transactionOpen = false;
+  async function exclusive<T>(fn: () => T | Promise<T>): Promise<T> {
+    const previous = queue;
+    let release!: () => void;
+    queue = new Promise<void>(resolve => { release = resolve; });
+    await previous;
+    try { return await fn(); } finally { release(); }
+  }
+
   return {
     dialect: 'sqlite',
 
@@ -182,37 +197,56 @@ export function createSqliteEngine(): DatabaseEngine {
       sql: string,
       params?: unknown[],
     ): Promise<QueryResult<T>> {
-      return runQuery<T>(sql, params);
+      if (transactionContext.getStore()?.active) return runQuery<T>(sql, params);
+      return exclusive(() => runQuery<T>(sql, params));
     },
 
     querySync<T = Record<string, unknown>>(sql: string, params?: unknown[]): QueryResult<T> {
+      if (transactionOpen && !transactionContext.getStore()?.active) {
+        throw new Error('Use async query() while another SQLite transaction is active');
+      }
       return runQuery<T>(sql, params);
     },
 
     async withTransaction<T>(fn: (query: TxQueryFn) => Promise<T>): Promise<T> {
-      const instance = getSqliteDb();
-      instance.exec('BEGIN');
-      try {
-        const txQuery: TxQueryFn = async <R = Record<string, any>>(
-          sql: string,
-          params?: unknown[],
-        ): Promise<QueryResult<R>> => {
-          return runQuery<R>(sql, params);
-        };
-        const result = await fn(txQuery);
-        instance.exec('COMMIT');
-        return result;
-      } catch (err) {
-        instance.exec('ROLLBACK');
-        throw err;
+      if (transactionContext.getStore()?.active) {
+        throw new Error('Nested SQLite transactions are not supported; reuse the transaction query');
       }
+      return exclusive(async () => {
+        const instance = getSqliteDb();
+        const context = { active: true };
+        instance.exec('BEGIN IMMEDIATE');
+        transactionOpen = true;
+        return transactionContext.run(context, async () => {
+          try {
+            const txQuery: TxQueryFn = async <R = Record<string, any>>(
+              sql: string,
+              params?: unknown[],
+            ): Promise<QueryResult<R>> => {
+              if (!context.active) throw new Error('SQLite transaction has already finished');
+              return runQuery<R>(sql, params);
+            };
+            const result = await fn(txQuery);
+            instance.exec('COMMIT');
+            return result;
+          } catch (err) {
+            instance.exec('ROLLBACK');
+            throw err;
+          } finally {
+            context.active = false;
+            transactionOpen = false;
+          }
+        });
+      });
     },
 
     async close(): Promise<void> {
-      if (db) {
-        db.close();
-        db = null;
-      }
+      await exclusive(() => {
+        if (db) {
+          db.close();
+          db = null;
+        }
+      });
     },
   };
 }

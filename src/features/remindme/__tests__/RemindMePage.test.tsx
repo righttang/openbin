@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RemindMePage } from '../RemindMePage';
@@ -94,7 +94,7 @@ describe('capture page acknowledgement messaging', () => {
     mocks.get.mockResolvedValue({ ...capture, state: 'applied', cleanup_completed_at: new Date().toISOString() });
     render(<MemoryRouter><RemindMePage /></MemoryRouter>);
     expect(await screen.findByText(/可以离开页面或锁屏/)).toBeInTheDocument();
-    expect(await screen.findByText('物品已记录，照片预览和详情可在识别历史中查看。', {}, { timeout: 2500 })).toBeInTheDocument();
+    expect(await screen.findByText('物品已记录，照片预览和详情可在历史中查看。', {}, { timeout: 2500 })).toBeInTheDocument();
     expect(mocks.upload).not.toHaveBeenCalled();
   });
 
@@ -111,31 +111,13 @@ describe('capture page acknowledgement messaging', () => {
     expect(mocks.clear).toHaveBeenCalledOnce();
   });
 
-  it('opens search-item crops and refreshes inventory after its photo history is deleted', async () => {
-    let removed = false;
-    const item = { id: 'scissors', name: '剪刀', description: '红色手柄', aliases: ['裁纸剪'], quantity: 1,
-      bin_id: 'drawer', bin_name: '抽屉 A', location_name: '家', area_name: null,
-      last_seen_at: capture.captured_at, observation_state: 'seen',
-      crop_url: '/api/captures/observations/obs/photos/photo/crop', photo_preview_url: '/api/captures/capture/photos/photo/preview' };
-    const photo = { capture_id: 'capture', photo_id: 'photo', bin_id: 'drawer', bin_name: '抽屉 A',
-      captured_at: capture.captured_at, state: 'applied', sequence: 1, error_category: null,
-      preview_url: item.photo_preview_url, items: [{ observation_id: 'obs', item_id: item.id, name: item.name,
-        description: item.description, aliases: item.aliases, quantity: item.quantity, crop_url: item.crop_url }] };
-    mocks.api.mockImplementation((path: string, options?: { method: string }) => {
-      if (options?.method === 'DELETE') { removed = true; return Promise.resolve({ removed: true, removed_items: 1 }); }
-      if (path.startsWith('/api/captures/history')) return Promise.resolve({ photos: removed ? [] : [photo] });
-      if (path.startsWith('/api/captures/inventory')) return Promise.resolve({ items: removed ? [] : [item] });
-      return Promise.resolve({ captures: [] });
-    });
+  it('shows a flat place selector and keeps search and history on separate pages', async () => {
     render(<MemoryRouter><RemindMePage /></MemoryRouter>);
-    const inventory = screen.getByRole('region', { name: '东西放在哪？' });
-    fireEvent.click(await within(inventory).findByRole('button', { name: '查看剪刀详情' }));
-    const dialog = await screen.findByRole('dialog', { name: '剪刀' });
-    expect(within(dialog).getByRole('img', { name: '剪刀的裁剪照片' })).toHaveAttribute('src', item.crop_url);
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
-    fireEvent.click(screen.getByRole('button', { name: '删除照片记录 1' }));
-    await waitFor(() => expect(within(inventory).queryByRole('button', { name: '查看剪刀详情' })).not.toBeInTheDocument());
-    expect(screen.queryByRole('article', { name: '照片记录 1：抽屉 A' })).not.toBeInTheDocument();
-    expect(removed).toBe(true);
+    expect(await screen.findByRole('heading', { name: '扫描' })).toBeInTheDocument();
+    const places = screen.getByRole('combobox', { name: '地点' });
+    expect(places).toHaveTextContent('抽屉 A');
+    expect(places).not.toHaveTextContent('书房 /');
+    expect(screen.queryByRole('textbox', { name: '搜索物品' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: '照片识别历史' })).not.toBeInTheDocument();
   });
 });

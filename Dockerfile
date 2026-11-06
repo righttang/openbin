@@ -49,6 +49,7 @@ COPY --chown=node:node LICENSE ./LICENSE
 COPY --chown=node:node --from=server-builder /app/node_modules ./node_modules
 COPY --chown=node:node --from=server-builder /app/dist ./dist
 COPY --chown=node:node server/schema.sqlite.sql server/schema.pg.sql ./
+COPY --chown=node:node server/scripts/migrate-sqlite-to-postgres.mjs ./scripts/migrate-sqlite-to-postgres.mjs
 COPY --chown=node:node --from=frontend-builder /app/dist ./public
 RUN mkdir -p /data/photos /data/photos/avatars /data/backups /scratch && chown -R node:node /data /scratch
 USER node

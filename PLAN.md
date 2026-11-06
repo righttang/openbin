@@ -1,5 +1,7 @@
 # RemindMe implementation plan
 
+> Current scope (2026-11-06): four flat pages — Scan, Find, Places, History. Scan and Find are the main workflows. Hide the upstream household/area/bin hierarchy and legacy inventory tools. A place is a directly named storage spot; preserve existing IDs and records internally. Migrate the deployed SQLite data, including retained photo previews and crops, to a dedicated database on Tomubuntu’s existing PostgreSQL service. Keep SQLite supported for local use and rollback snapshots.
+
 Date: 2026-11-06
 
 Build a self-hosted household item finder from OpenBin. The first version uses a mobile-friendly website: select a storage location, take or upload multiple photos, and automatically update the recorded contents through the owner's LiteLLM server. Original photos are temporary processing inputs; compressed history previews and item crops remain available. The product must not require reviewing or approving AI results.
@@ -24,7 +26,7 @@ The project directory is `/Users/tangt4/Projects/llm/remindme`. It currently con
 
 Use [OpenBin](https://github.com/akifbayram/openbin) as the application base. The architecture assessment used commit `7ffc01a086c8d8c52afcb8db2faed50b93a3d3d5`; select and pin the implementation baseline before importing it into this directory. Preserve its license and required notices.
 
-Reuse its React/TypeScript frontend, Express backend, authentication, locations, search, database migrations, and self-hosted deployment. Start with SQLite on the home server's local disk and a bounded temporary photo directory.
+Reuse its React/TypeScript frontend, Express backend, authentication, locations, search, database migrations, and self-hosted deployment. Support PostgreSQL on the existing home server database service, with SQLite retained for local use and a bounded temporary photo directory.
 
 The existing photo workflow needs substantive changes:
 
@@ -63,7 +65,7 @@ Server-side processing must continue independently once the batch is accepted, i
 flowchart LR
     W[Mobile and desktop website] --> A[Capture and search API]
     F[Future native app or drawer camera] -.-> A
-    A --> D[SQLite]
+    A --> D[PostgreSQL / SQLite]
     A --> T[Bounded temporary image storage]
     D --> J[Persistent job worker]
     T --> J
@@ -73,7 +75,7 @@ flowchart LR
     J --> C[Automatic image cleanup]
 ```
 
-Use one application container initially. The API and background worker can run in the same process, with job state and leases stored in SQLite. Limit recognition concurrency to one initially. Upload handling must never wait for model inference.
+Use one application container initially. The API and background worker can run in the same process, with job state and leases stored in the database. Limit recognition concurrency to one initially. Upload handling must never wait for model inference.
 
 Keep these responsibilities separate in code:
 
@@ -165,11 +167,11 @@ Store capture and receipt timestamps separately for display and diagnostics. Bef
 
 ## Image retention and disk limits
 
-Treat original uploaded images as temporary. Retain separately bounded history previews and item crops in SQLite BLOB columns, not ordinary bin attachments or JSON fields.
+Treat original uploaded images as temporary. Retain separately bounded history previews and item crops in PostgreSQL BYTEA or SQLite BLOB columns, not ordinary bin attachments or JSON fields.
 
 - On success: validate the result, create item crops using model-provided normalized boxes, and commit observations plus retained image BLOBs atomically. Then immediately delete originals and request staging files. Mark original cleanup complete only after deletion succeeds.
 - Retained preview maximum: 960 px longest side and 256 KiB. Retained crop maximum: 512 px longest side and 128 KiB. Bound total derived image storage (default 512 MiB) and per-batch crop preparation memory (32 MiB). At capacity, retain text results and show missing-image fallback rather than silently evicting older evidence.
-- Deleting a photo history record clears its preview and crops atomically with retracting exclusive observations and updating inventory. SQLite space becomes reusable; old backup copies are not automatically scrubbed.
+- Deleting a photo history record clears its preview and crops atomically with retracting exclusive observations and updating inventory. Database space becomes reusable; old backup copies are not automatically scrubbed.
 - On deletion failure: persist a cleanup task and retry; a restart must not strand images indefinitely.
 - On model failure, cancellation, or incomplete upload: retain files only for a bounded retry/expiry period, then delete them and keep a small failure record.
 - Run a startup and periodic sweeper for expired batches, orphaned files, and incomplete cleanup.
@@ -208,7 +210,7 @@ AI_MODEL=home-vision
 
 `home-vision` is an alias configured on the owner's gateway. Use the gateway's actual reachable address in deployment. Test image input, multiple images, structured results, timeouts, and failure behavior against that alias before selecting the final batch limit.
 
-Keep gateway credentials on the server. Publish the web app through HTTPS trusted by the iPhone so in-page camera capture works. Store SQLite on local server storage, keep temporary images in a separately bounded directory, and expose application health and job status.
+Keep gateway credentials on the server. Publish the web app through HTTPS trusted by the iPhone so in-page camera capture works. Use a dedicated PostgreSQL database and application role on the shared server (or keep SQLite on local disk), keep temporary images in a separately bounded directory, and expose application health and job status.
 
 Storage is local to the home server. The inference destination depends on the providers configured behind LiteLLM.
 

@@ -9,6 +9,14 @@ export const PG_CONNECTION_STRING =
   'postgres://openbin_test:openbin_test@localhost:5433/openbin_test';
 
 export const TABLES = [
+  'observation_photos',
+  'capture_photo_history',
+  'capture_item_baselines',
+  'observations',
+  'analysis_jobs',
+  'capture_photos',
+  'capture_batches',
+  'bin_capture_state',
   'email_log',
   'refresh_tokens',
   'scan_history',

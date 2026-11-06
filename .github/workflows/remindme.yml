@@ -31,10 +31,53 @@ jobs:
       - run: npm --prefix server ci
       - run: npm run check
       - run: npm test -- src/features/remindme src/features/auth src/features/settings src/features/layout/__tests__/Sidebar.localMode.test.tsx src/lib/__tests__/qrConfig.test.ts
-      - run: npm --prefix server test -- src/lib/captures src/__tests__/captures.test.ts src/__tests__/captureHistory.test.ts src/__tests__/localMode.test.ts src/__tests__/auth.test.ts src/lib/__tests__/binUpdateHelpers.test.ts
+      - run: npm --prefix server test -- src/lib/captures src/__tests__/captures.test.ts src/__tests__/captureHistory.test.ts src/__tests__/localMode.test.ts src/__tests__/auth.test.ts src/lib/__tests__/binUpdateHelpers.test.ts src/db/__tests__/sqlite-concurrency.test.ts
       - run: npm run build
       - run: npm --prefix server run build
       - name: Build production container
         run: docker build --build-arg BUILD_VERSION=remindme-${GITHUB_SHA::7} -t remindme:ci .
       - name: Verify container and persistent storage
         run: node scripts/docker-smoke.mjs remindme:ci
+
+  postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: openbin_test
+          POSTGRES_PASSWORD: openbin_test
+          POSTGRES_DB: openbin_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U openbin_test -d openbin_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      REMINDME_TEST_DATABASE_URL: postgres://openbin_test:openbin_test@127.0.0.1:5433/remindme_capture_test
+      MIGRATION_TEST_DATABASE_URL: postgres://openbin_test:openbin_test@127.0.0.1:5433/remindme_migration_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm --prefix server ci
+      - name: Create isolated test databases
+        working-directory: server
+        run: |
+          node --input-type=module <<'JS'
+          import pg from 'pg';
+          const client = new pg.Client({connectionString:'postgres://openbin_test:openbin_test@127.0.0.1:5433/openbin_test'});
+          await client.connect();
+          await client.query('CREATE DATABASE remindme_capture_test');
+          await client.query('CREATE DATABASE remindme_migration_test');
+          await client.end();
+          JS
+      - name: Verify PostgreSQL capture and history behavior
+        working-directory: server
+        run: npx vitest run --config vitest.captures-pg.config.ts
+      - name: Verify database migration and rollback
+        run: node --test server/scripts/migrate-sqlite-to-postgres.test.mjs

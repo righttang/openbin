@@ -87,11 +87,11 @@ describe('capture ingestion', () => {
     const { body: batch } = await create();
     const photoId = crypto.randomUUID();
     expect((await upload(batch.id, photoId, png, '0'.repeat(64))).status).toBe(422);
-    expect(scratchUsage()).toBe(0);
+    expect(await scratchUsage()).toBe(0);
     expect((await upload(batch.id, photoId)).status).toBe(200);
     expect((await upload(batch.id, photoId, png, '0'.repeat(64))).status).toBe(409);
     expect((await upload(batch.id)).status).toBe(409); // duplicate bytes under a new ID
-    expect(scratchUsage()).toBe(png.length);
+    expect(await scratchUsage()).toBe(png.length);
   });
 
   it('checks image bytes and rejects unsupported HEIC before accepting data', async () => {
@@ -102,7 +102,7 @@ describe('capture ingestion', () => {
       .set('Authorization', `Bearer ${token}`).set('Content-Type', 'image/heic')
       .set('X-Photo-SHA256', hash).send(png);
     expect(heic.status).toBe(415);
-    expect(scratchUsage()).toBe(0);
+    expect(await scratchUsage()).toBe(0);
   });
 
   it('enforces owner/member access for writes and hides other households', async () => {
@@ -130,14 +130,14 @@ describe('capture ingestion', () => {
     fs.ftruncateSync(handle, captureConfig.scratchQuotaBytes); // sparse file
     fs.closeSync(handle);
     expect((await upload(batch.id)).status).toBe(507);
-    expect(scratchUsage()).toBe(captureConfig.scratchQuotaBytes);
+    expect(await scratchUsage()).toBe(captureConfig.scratchQuotaBytes);
   });
 
   it('refuses new uploads below the free disk threshold', async () => {
     const { body: batch } = await create();
     vi.spyOn(fs, 'statfsSync').mockReturnValue({ bavail: 0, bsize: 4096 } as ReturnType<typeof fs.statfsSync>);
     expect((await upload(batch.id)).body.error).toBe('DISK_SPACE');
-    expect(scratchUsage()).toBe(0);
+    expect(await scratchUsage()).toBe(0);
   });
 
   it('reserves before concurrent requests write, leaving shared headroom intact', async () => {
@@ -149,7 +149,7 @@ describe('capture ingestion', () => {
     fs.closeSync(handle);
     const responses = await Promise.all([upload(first), upload(second)]);
     expect(responses.map(r => r.status).sort()).toEqual([200, 507]);
-    expect(scratchUsage()).toBe(captureConfig.scratchQuotaBytes - captureConfig.reservedHeadroomBytes);
+    expect(await scratchUsage()).toBe(captureConfig.scratchQuotaBytes - captureConfig.reservedHeadroomBytes);
   });
 
   it('can recover a restored uploading manifest whose acknowledged scratch file is missing', async () => {
@@ -176,7 +176,7 @@ describe('capture ingestion', () => {
     const trickle = setInterval(() => stream.write(png.subarray(0, 1)), 10);
     try { await expect(pending).rejects.toThrow('Photo upload deadline exceeded'); }
     finally { clearInterval(trickle); }
-    expect(scratchUsage()).toBe(0);
+    expect(await scratchUsage()).toBe(0);
     await sweepCaptures();
     expect(getDb().prepare('SELECT state FROM capture_batches WHERE id = ?').get(batch.id)).toEqual({ state: 'expired' });
   });
@@ -221,10 +221,10 @@ describe('capture cleanup and inventory', () => {
     getDb().prepare("UPDATE capture_batches SET state = 'applied' WHERE id = ?").run(batch.id);
     vi.spyOn(fs, 'rmSync').mockImplementationOnce(() => { throw new Error('disk busy'); });
     expect(await cleanupCapture(batch.id)).toBe(false);
-    expect(scratchUsage()).toBe(png.length);
+    expect(await scratchUsage()).toBe(png.length);
     expect(await cleanupCapture(batch.id)).toBe(true);
     expect(await cleanupCapture(batch.id)).toBe(true);
-    expect(scratchUsage()).toBe(0);
+    expect(await scratchUsage()).toBe(0);
   });
 
   it('returns aliases, descriptions and last-known observations after image deletion with household-scoped search', async () => {

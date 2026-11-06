@@ -21,5 +21,7 @@
 !server/schema.sqlite.sql
 !server/schema.pg.sql
 !server/openapi.yaml
+!server/scripts/
+!server/scripts/migrate-sqlite-to-postgres.mjs
 !server/src/
 !server/src/**

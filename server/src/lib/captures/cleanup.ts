@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { getDb } from '../../db.js';
+import { query } from '../../db.js';
 import { captureConfig } from './config.js';
+import { withCaptureTransaction } from './database.js';
 import type { CaptureBatch, CapturePhoto } from './types.js';
 
 const active = new Map<string, number>();
@@ -29,13 +30,13 @@ export function captureDirectory(id: string): string {
 /** Deletion is restart-safe: a durable terminal state precedes unlinking. */
 export async function cleanupCapture(id: string): Promise<boolean> {
   if (active.has(id)) return false;
-  const db = getDb();
-  const batch = db.prepare('SELECT * FROM capture_batches WHERE id = ?').get(id) as CaptureBatch | undefined;
+  const execute = query;
+  const batch = (await execute('SELECT * FROM capture_batches WHERE id = $1', [id])).rows[0] as CaptureBatch | undefined;
   if (!batch || batch.cleanup_completed_at) return true;
   const expiredFailure = batch.state === 'failed' && batch.expires_at <= new Date().toISOString();
   if (!['applied', 'superseded', 'expired'].includes(batch.state) && !expiredFailure) return false;
   try {
-    const photos = db.prepare('SELECT id,storage_path FROM capture_photos WHERE capture_id = ?').all(id) as Pick<CapturePhoto, 'id' | 'storage_path'>[];
+    const photos = (await execute('SELECT id,storage_path FROM capture_photos WHERE capture_id = $1', [id])).rows as Pick<CapturePhoto, 'id' | 'storage_path'>[];
     // Stored paths can point to the previous scratch directory after a config
     // change. Remove those inputs too, rather than marking them deleted merely
     // because the new directory is empty.
@@ -47,10 +48,10 @@ export async function cleanupCapture(id: string): Promise<boolean> {
     }
     fs.rmSync(captureDirectory(id), { recursive: true, force: true });
     const now = new Date().toISOString();
-    db.transaction(() => {
-      db.prepare('UPDATE capture_photos SET deleted_at = COALESCE(deleted_at, ?) WHERE capture_id = ?').run(now, id);
-      db.prepare('UPDATE capture_batches SET cleanup_completed_at = ?, updated_at = ? WHERE id = ?').run(now, now, id);
-    })();
+    await withCaptureTransaction(async (execute) => {
+      await execute('UPDATE capture_photos SET deleted_at = COALESCE(deleted_at, $1) WHERE capture_id = $2', [now, id]);
+      await execute('UPDATE capture_batches SET cleanup_completed_at = $1, updated_at = $2 WHERE id = $3', [now, now, id]);
+    });
     return true;
   } catch {
     // Keep cleanup_completed_at NULL so startup/periodic sweep retries.
@@ -59,14 +60,14 @@ export async function cleanupCapture(id: string): Promise<boolean> {
 }
 
 export async function sweepCaptures(): Promise<void> {
-  const db = getDb();
+  const execute = query;
   const now = new Date().toISOString();
-  const expired = db.prepare("SELECT id FROM capture_batches WHERE state = 'uploading' AND expires_at <= ?").all(now) as { id: string }[];
+  const expired = (await execute("SELECT id FROM capture_batches WHERE state = 'uploading' AND expires_at <= $1", [now])).rows as { id: string }[];
   for (const { id } of expired) {
-    if (!active.has(id)) db.prepare("UPDATE capture_batches SET state = 'expired', updated_at = ? WHERE id = ? AND state = 'uploading'").run(now, id);
+    if (!active.has(id)) await execute("UPDATE capture_batches SET state = 'expired', updated_at = $1 WHERE id = $2 AND state = 'uploading'", [now, id]);
   }
-  const pending = db.prepare(`SELECT id FROM capture_batches WHERE cleanup_completed_at IS NULL
-    AND (state IN ('applied','superseded','expired') OR (state = 'failed' AND expires_at <= ?))`).all(now) as { id: string }[];
+  const pending = (await execute(`SELECT id FROM capture_batches WHERE cleanup_completed_at IS NULL
+    AND (state IN ('applied','superseded','expired') OR (state = 'failed' AND expires_at <= $1))`, [now])).rows as { id: string }[];
   for (const { id } of pending) await cleanupCapture(id);
 
   fs.mkdirSync(captureConfig.scratchPath, { recursive: true, mode: 0o700 });
@@ -74,7 +75,7 @@ export async function sweepCaptures(): Promise<void> {
   // prevents touching newly arriving files; known active inputs are never evicted.
   for (const entry of fs.readdirSync(captureConfig.scratchPath, { withFileTypes: true })) {
     if (active.has(entry.name)) continue;
-    if (db.prepare('SELECT 1 FROM capture_batches WHERE id = ?').get(entry.name)) continue;
+    if ((await execute('SELECT 1 FROM capture_batches WHERE id = $1', [entry.name])).rows[0]) continue;
     const filename = path.join(captureConfig.scratchPath, entry.name);
     try {
       if (fs.lstatSync(filename).mtimeMs > Date.now() - captureConfig.uploadExpiryMs) continue;

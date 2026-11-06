@@ -1,0 +1,14 @@
+# Connect to an existing PostgreSQL container without changing its deployment.
+# docker compose -f docker-compose.remindme.yml -f docker-compose.remindme.postgres.yml up -d --wait
+services:
+  remindme:
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set the dedicated RemindMe database connection in .env}
+    networks:
+      - default
+      - database
+
+networks:
+  database:
+    external: true
+    name: ${POSTGRES_NETWORK:-shared-services}

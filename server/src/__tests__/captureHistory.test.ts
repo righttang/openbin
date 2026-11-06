@@ -33,7 +33,7 @@ afterEach(() => {
   else process.env.CAPTURE_HISTORY_QUOTA_BYTES = initialQuota;
 });
 
-function batch(sequence: number, count = 1, state = 'applied', includeHistory = true) {
+async function batch(sequence: number, count = 1, state = 'applied', includeHistory = true) {
   const db = getDb();
   const id = crypto.randomUUID();
   const at = `2026-10-${String(sequence).padStart(2, '0')}T12:00:00.000Z`;
@@ -45,12 +45,12 @@ function batch(sequence: number, count = 1, state = 'applied', includeHistory = 
     db.prepare(`INSERT INTO capture_photos
       (capture_id,id,position,sha256,size,mime_type,storage_path,received_at) VALUES (?,?,?,?,?,?,?,?)`)
       .run(id, photoId, position, 'a'.repeat(64), 4, 'image/jpeg', `/tmp/${id}/${photoId}`, at);
-    if (includeHistory) storePhotoPreview(id, photoId, { jpeg: image, width: 20, height: 10 });
+    if (includeHistory) await storePhotoPreview(id, photoId, { jpeg: image, width: 20, height: 10 });
   }
   return { id, at, photoIds };
 }
 
-function observe(capture: ReturnType<typeof batch>, itemId = crypto.randomUUID(), name = 'Headphones', quantity: number | null = 1, photoIds = capture.photoIds, links = true) {
+function observe(capture: Awaited<ReturnType<typeof batch>>, itemId = crypto.randomUUID(), name = 'Headphones', quantity: number | null = 1, photoIds = capture.photoIds, links = true) {
   const db = getDb();
   db.prepare(`INSERT INTO bin_items
     (id,bin_id,name,quantity,description,aliases_json,last_seen_batch_id,last_seen_at,observation_state,capture_created,created_at,updated_at)
@@ -70,13 +70,13 @@ function observe(capture: ReturnType<typeof batch>, itemId = crypto.randomUUID()
   return { itemId, observationId };
 }
 
-function remove(capture: ReturnType<typeof batch>, photoId = capture.photoIds[0], auth = token) {
+function remove(capture: Awaited<ReturnType<typeof batch>>, photoId = capture.photoIds[0], auth = token) {
   return request(app).delete(`/api/captures/${capture.id}/photos/${photoId}/history`).set('Authorization', `Bearer ${auth}`);
 }
 
 describe('photo recognition history', () => {
   it('groups results by photo and serves authorized previews and item crops', async () => {
-    const capture = batch(1, 2);
+    const capture = await batch(1, 2);
     const first = observe(capture, undefined, 'Headphones', 1, [capture.photoIds[0]]);
     observe(capture, undefined, 'Power board', 1, [capture.photoIds[1]]);
     const response = await request(app).get(`/api/captures/history?bin_id=${binId}`).set('Authorization', `Bearer ${token}`);
@@ -99,7 +99,7 @@ describe('photo recognition history', () => {
   });
 
   it('keeps multi-photo evidence until its last supporting photo is removed', async () => {
-    const capture = batch(1, 2);
+    const capture = await batch(1, 2);
     const item = observe(capture);
     expect((await remove(capture)).body.removed_items).toBe(0);
     expect(getDb().prepare('SELECT dismissed_at FROM observations WHERE id=?').get(item.observationId)).toEqual({ dismissed_at: null });
@@ -115,32 +115,32 @@ describe('photo recognition history', () => {
   });
 
   it('restores the last surviving observation and handles removal in either order', async () => {
-    const old = batch(1);
+    const old = await batch(1);
     const item = observe(old, undefined, 'Old headphones', 2);
-    const newer = batch(2);
+    const newer = await batch(2);
     observe(newer, item.itemId, 'New headphones', null);
     expect((await remove(newer)).status).toBe(200);
     expect(getDb().prepare('SELECT name,quantity,last_seen_batch_id FROM bin_items WHERE id=?').get(item.itemId))
       .toEqual({ name: 'Old headphones', quantity: 2, last_seen_batch_id: old.id });
     expect((await remove(old)).body.removed_items).toBe(1);
 
-    const third = batch(3);
+    const third = await batch(3);
     const other = observe(third, undefined, 'Before', 2);
-    const fourth = batch(4);
+    const fourth = await batch(4);
     observe(fourth, other.itemId, 'After', 3);
     expect((await remove(third)).body.removed_items).toBe(0);
     expect(getDb().prepare('SELECT name,quantity FROM bin_items WHERE id=?').get(other.itemId)).toEqual({ name: 'After', quantity: 3 });
   });
 
   it('preserves newer manual edits and restores a manual baseline when its recognition disappears', async () => {
-    const capture = batch(1);
+    const capture = await batch(1);
     const edited = observe(capture);
     getDb().prepare('UPDATE bin_items SET name=?,updated_at=? WHERE id=?').run('My correction', '2026-11-01T12:00:00.000Z', edited.itemId);
     await remove(capture);
     expect(getDb().prepare('SELECT name,deleted_at,last_seen_batch_id,last_seen_at FROM bin_items WHERE id=?').get(edited.itemId))
       .toEqual({ name: 'My correction', deleted_at: null, last_seen_batch_id: null, last_seen_at: null });
 
-    const second = batch(2);
+    const second = await batch(2);
     const manual = observe(second);
     getDb().prepare('UPDATE bin_items SET capture_created=0 WHERE id=?').run(manual.itemId);
     getDb().prepare('INSERT INTO capture_item_baselines (item_id,snapshot_json) VALUES (?,?)').run(manual.itemId, JSON.stringify({
@@ -153,7 +153,7 @@ describe('photo recognition history', () => {
   });
 
   it('backs old text-only observations into photo groups without inventing images', async () => {
-    const capture = batch(1, 1, 'applied', false);
+    const capture = await batch(1, 1, 'applied', false);
     const item = observe(capture, undefined, 'Old item', 1, capture.photoIds, false);
     getDb().prepare('UPDATE bin_items SET capture_created=0 WHERE id=?').run(item.itemId);
     captureHistory.sqlite!(getDb());
@@ -164,9 +164,9 @@ describe('photo recognition history', () => {
   });
 
   it('restores a manual revision newer than the remaining automatic observation', async () => {
-    const first = batch(1);
+    const first = await batch(1);
     const item = observe(first, undefined, 'Old automatic name', 1);
-    const second = batch(3);
+    const second = await batch(3);
     observe(second, item.itemId, 'New automatic name', 2);
     getDb().prepare('UPDATE bin_items SET capture_created=0 WHERE id=?').run(item.itemId);
     getDb().prepare('INSERT INTO capture_item_baselines (item_id,snapshot_json) VALUES (?,?)').run(item.itemId, JSON.stringify({
@@ -183,9 +183,9 @@ describe('photo recognition history', () => {
   });
 
   it('keeps matched superseded observations as fallback evidence without inventing items', async () => {
-    const older = batch(1, 1, 'superseded');
+    const older = await batch(1, 1, 'superseded');
     const item = observe(older, undefined, 'Earlier photo name', 2);
-    const newer = batch(2);
+    const newer = await batch(2);
     observe(newer, item.itemId, 'Latest photo name', 3);
     await remove(newer);
     expect(getDb().prepare('SELECT name,quantity,last_seen_batch_id,deleted_at FROM bin_items WHERE id=?').get(item.itemId))
@@ -195,21 +195,21 @@ describe('photo recognition history', () => {
   });
 
   it('keeps the history entry if retained-image quota is full and does not replace a dismissed preview', async () => {
-    const capture = batch(1, 1, 'queued', false);
+    const capture = await batch(1, 1, 'queued', false);
     process.env.CAPTURE_HISTORY_QUOTA_BYTES = '1';
-    expect(canStoreHistoryBytes(image.length)).toBe(false);
-    storePhotoPreview(capture.id, capture.photoIds[0], { jpeg: image, width: 20, height: 10 });
+    expect(await canStoreHistoryBytes(image.length)).toBe(false);
+    await storePhotoPreview(capture.id, capture.photoIds[0], { jpeg: image, width: 20, height: 10 });
     expect(getDb().prepare('SELECT preview_jpeg FROM capture_photo_history').get()).toEqual({ preview_jpeg: null });
     const oldRevision = (getDb().prepare('SELECT revision FROM bin_capture_state WHERE bin_id=?').get(binId) as { revision: number }).revision;
     await remove(capture);
     expect((getDb().prepare('SELECT revision FROM bin_capture_state WHERE bin_id=?').get(binId) as { revision: number }).revision).toBeGreaterThan(oldRevision);
     process.env.CAPTURE_HISTORY_QUOTA_BYTES = '1000';
-    storePhotoPreview(capture.id, capture.photoIds[0], { jpeg: image, width: 20, height: 10 });
+    await storePhotoPreview(capture.id, capture.photoIds[0], { jpeg: image, width: 20, height: 10 });
     expect(getDb().prepare('SELECT preview_jpeg FROM capture_photo_history').get()).toEqual({ preview_jpeg: null });
   });
 
   it('enforces household/private visibility and prevents viewers from removing records', async () => {
-    const capture = batch(1);
+    const capture = await batch(1);
     const item = observe(capture);
     const otherId = crypto.randomUUID();
     getDb().prepare('INSERT INTO users (id,email,display_name) VALUES (?,?,?)').run(otherId, 'other@test.invalid', 'Other');

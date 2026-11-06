@@ -13,6 +13,7 @@ import { resetAiCreditPeriods } from './0012_reset_ai_credit_periods.js';
 import { userConsent } from './0013_user_consent.js';
 import { captureBatches } from './0014_capture_batches.js';
 import { captureHistory } from './0015_capture_history.js';
+import { capturePostgres } from './0016_capture_postgres.js';
 import type { Migration } from './types.js';
 
 /**
@@ -35,4 +36,5 @@ export const migrations: Migration[] = [
   userConsent,
   captureBatches,
   captureHistory,
+  capturePostgres,
 ];

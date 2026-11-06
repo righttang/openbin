@@ -19,8 +19,8 @@ services:
       SELF_HOSTED: 'true'
       REMINDME_LOCAL_MODE: ${REMINDME_LOCAL_MODE:-true}
       PORT: '1453'
-      # Capture/history currently require SQLite; do not accidentally connect a shared PostgreSQL DB.
-      DATABASE_URL: ''
+      # Empty uses SQLite; PostgreSQL uses a dedicated database and application role.
+      DATABASE_URL: ${DATABASE_URL:-}
       DATABASE_PATH: /data/remindme.db
       PHOTO_STORAGE_PATH: /data/photos
       CAPTURE_SCRATCH_PATH: /scratch
