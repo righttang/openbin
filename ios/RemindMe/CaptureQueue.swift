@@ -24,6 +24,7 @@ enum PhotoProcessor {
     private var workers: [String: Task<Void, Never>] = [:]
     private var cancellations: [String: Task<Void, Never>] = [:]
     private var retryAfter: [String: Date] = [:]
+    private var replacements: Set<String> = []
     private var monitor: Task<Void, Never>?
     private var enabled = false
 
@@ -194,10 +195,13 @@ enum PhotoProcessor {
         }
     }
     private func replaceExpired(_ old: PhotoDraft) async {
-        guard workers[old.id] == nil else { return }
+        guard workers[old.id] == nil, !replacements.contains(old.id) else { return }
+        replacements.insert(old.id)
+        defer { replacements.remove(old.id) }
         do {
             let data = try Data(contentsOf: photoURL(old.id))
             try await api.cancel(old.id, placeID: old.place.id)
+            guard drafts.contains(where: { $0.id == old.id && !$0.cancelRequested }) else { return }
             // Save the replacement first. Disk failures retain the original for another retry.
             try enqueue(jpeg: data, place: old.place)
             try markCancelled(old.id)

@@ -22,6 +22,12 @@ phones = [d for group in devices['devices'].values() for d in group if d['name']
 if not phones:
     raise SystemExit('Create a dedicated iPhone simulator named RemindMe QA in Xcode before running local UI tests')
 device = phones[0]
+# Xcode 26 can retain a SpringBoard launch lock after installing a new test host.
+# Restart only this project's dedicated simulator; never reset another project's device.
+if device['state'] == 'Booted':
+    subprocess.run(['xcrun', 'simctl', 'shutdown', device['udid']], check=True)
+subprocess.run(['xcrun', 'simctl', 'boot', device['udid']], check=True)
+subprocess.run(['xcrun', 'simctl', 'bootstatus', device['udid'], '-b'], check=True)
 destination = 'platform=iOS Simulator,id=' + device['udid']
 subprocess.run(['xcodebuild', '-project', 'ios/RemindMe.xcodeproj', '-scheme', 'RemindMe', '-configuration', 'Debug', '-sdk', 'iphonesimulator', '-destination', destination, '-derivedDataPath', 'ios/build', 'build-for-testing'], cwd=repo, check=True)
 runfile = max((repo / 'ios/build/Build/Products').glob('*.xctestrun'), key=lambda p: p.stat().st_mtime)

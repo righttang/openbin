@@ -81,8 +81,9 @@ struct ScanView: View {
             .photosPicker(isPresented: $galleryPresented, selection: $pickerItems, maxSelectionCount: 10, matching: .images)
             .onChange(of: pickerItems) { _, selected in
                 guard !selected.isEmpty, let place = pickerPlace else { return }
-                importing = true
+                importing = true; store.beginImport()
                 Task {
+                    defer { store.finishImport() }
                     for item in selected {
                         do { if let data = try await item.loadTransferable(type: Data.self) { await store.receive(data, at: place) } }
                         catch { store.error = "相册照片无法读取，请重试。" }

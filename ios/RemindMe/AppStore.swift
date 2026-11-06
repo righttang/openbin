@@ -87,9 +87,11 @@ struct UndoRecord: Identifiable {
     }
     func connect(to value: String) async throws {
         let url = try ServerAddress.parse(value)
-        if url.absoluteString != server && (preparingPhotos > 0 || queue.pendingCount > 0 || queue.unsubmittedCount > 0) { throw APIError.message("请先上传或取消待处理照片，再切换服务器。") }
+        if url.absoluteString == server { _ = try await api.connect(); await activate(); return }
+        if preparingPhotos > 0 || queue.pendingCount > 0 || queue.unsubmittedCount > 0 { throw APIError.message("请先上传或取消待处理照片，再切换服务器。") }
         let candidate = APIClient(baseURL: url)
         _ = try await candidate.connect()
+        if preparingPhotos > 0 || queue.pendingCount > 0 || queue.unsubmittedCount > 0 { throw APIError.message("请先上传或取消待处理照片，再切换服务器。") }
         guard !refreshing else { throw APIError.message("正在刷新，请稍后再试。") }
         queue.stop(); api = candidate; server = url.absoluteString; scope = Self.folder(server)
         queue = CaptureQueue(api: candidate, folder: scope.appendingPathComponent("uploads")); wireQueue()
@@ -112,6 +114,8 @@ struct UndoRecord: Identifiable {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
         } catch { self.error = error.localizedDescription }
     }
+    func beginImport() { preparingPhotos += 1 }
+    func finishImport() { preparingPhotos -= 1 }
     func search(_ query: String, place: String) async throws -> [InventoryItem] {
         if !connected {
             return items.filter { (place.isEmpty || $0.bin_id == place) && (query.isEmpty || ([$0.name, $0.description, $0.bin_name] + $0.aliases).contains { $0.localizedCaseInsensitiveContains(query) }) }

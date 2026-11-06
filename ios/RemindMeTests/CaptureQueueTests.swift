@@ -12,7 +12,8 @@ actor FakeCaptureAPI: CaptureTransport {
     var failCancel = false
     var loseCompletion = false
     var expired = false
-    func configure(delay: Duration = .zero, failCancel: Bool = false, loseCompletion: Bool = false, expired: Bool = false) { self.delay = delay; self.failCancel = failCancel; self.loseCompletion = loseCompletion; self.expired = expired }
+    var cancelDelay: Duration = .zero
+    func configure(delay: Duration = .zero, failCancel: Bool = false, loseCompletion: Bool = false, expired: Bool = false, cancelDelay: Duration = .zero) { self.delay = delay; self.failCancel = failCancel; self.loseCompletion = loseCompletion; self.expired = expired; self.cancelDelay = cancelDelay }
     func create(_ draft: PhotoDraft) async throws -> Capture {
         creates += 1
         if let current = records[draft.id] { return current }
@@ -30,6 +31,7 @@ actor FakeCaptureAPI: CaptureTransport {
     }
     func capture(_ id: String) async throws -> Capture { records[id] ?? Capture(id: id, state: "queued") }
     func cancel(_ id: String, placeID: String) async throws {
+        try await Task.sleep(for: cancelDelay)
         if failCancel { throw URLError(.notConnectedToInternet) }
         records[id] = Capture(id: id, state: "cancelled")
     }
@@ -102,9 +104,20 @@ actor FakeCaptureAPI: CaptureTransport {
         let queue = CaptureQueue(api: api, folder: folder); defer { queue.stop() }
         try queue.enqueue(jpeg: image(), place: .init(id: "drawer", name: "抽屉")); let old = queue.drafts[0].id
         queue.start(); try await waitUntil { queue.drafts[0].state == "expired" }
-        await api.configure(); queue.retry(old)
+        await api.configure(cancelDelay: .milliseconds(50)); queue.retry(old); queue.retry(old)
         try await waitUntil { queue.drafts.contains { $0.id != old && $0.accepted } }
         XCTAssertEqual(queue.drafts.first { $0.id == old }?.state, "cancelled")
+        XCTAssertEqual(queue.drafts.filter { $0.id != old }.count, 1)
+    }
+    func testCancelWinsOverExpiredPhotoReplacement() async throws {
+        let api = FakeCaptureAPI(); await api.configure(expired: true)
+        let queue = CaptureQueue(api: api, folder: folder); defer { queue.stop() }
+        try queue.enqueue(jpeg: image(), place: .init(id: "drawer", name: "抽屉")); let old = queue.drafts[0].id
+        queue.start(); try await waitUntil { queue.drafts[0].state == "expired" }
+        await api.configure(cancelDelay: .milliseconds(100)); queue.retry(old)
+        try await Task.sleep(for: .milliseconds(20)); queue.cancel(old)
+        try await waitUntil { queue.drafts[0].state == "cancelled" }
+        XCTAssertEqual(queue.drafts.count, 1)
     }
     func testInvalidServerAddressesAreRejectedAndLocalAddressNormalized() throws {
         XCTAssertEqual(try ServerAddress.parse(" 192.168.50.84:1453/ ").absoluteString, ServerAddress.production)
