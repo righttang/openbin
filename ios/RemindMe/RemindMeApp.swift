@@ -86,7 +86,9 @@ struct RemotePhoto: View {
                 if fit { image.resizable().scaledToFit() } else { image.resizable().scaledToFill() }
             } else {
                 Rectangle().fill(.quaternary).overlay { Image(systemName: phase.error == nil && path != nil ? "photo" : "photo.badge.exclamationmark").foregroundStyle(.secondary) }
-                    .onAppear { if phase.error != nil && fallback != nil { useFallback = true } }
+                    .onChange(of: phase.error != nil, initial: true) { _, failed in
+                        if failed && fallback != nil && !useFallback { useFallback = true }
+                    }
             }
         }.onChange(of: path) { _, _ in useFallback = false }
     }
