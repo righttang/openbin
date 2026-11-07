@@ -59,7 +59,7 @@ struct ScanView: View {
                                 selectedPhoto = store.history.first { $0.capture_id == draft.id }
                             } label: {
                                 HStack(spacing: 12) {
-                                    LocalThumbnail(url: queue.thumbnailURL(draft.id)).frame(width: 64, height: 64).clipShape(RoundedRectangle(cornerRadius: 12))
+                                    CaptureThumbnail(draft: draft, queue: queue).frame(width: 64, height: 64).clipShape(RoundedRectangle(cornerRadius: 12))
                                     VStack(alignment: .leading, spacing: 5) {
                                         Text(draft.place.name).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
                                         Text(draft.label).font(.caption).foregroundStyle(draft.state == "applied" ? .green : .secondary)

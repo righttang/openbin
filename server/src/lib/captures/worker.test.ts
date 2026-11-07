@@ -5,7 +5,8 @@ import sharp from 'sharp';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getDb } from '../../db.js';
 import { captureDirectory, sweepCaptures } from './cleanup.js';
-import { dismissPhotoHistory, listPhotoHistory } from './history.js';
+import { dismissPhotoHistory, listPhotoHistory, storePhotoPreview } from './history.js';
+import { makePhotoPreview } from './media.js';
 import type { RecognitionResult, Recognizer } from './recognition.js';
 import { CaptureProcessingError, recognizeCapture, validateRecognition } from './recognition.js';
 import { processNextCapture } from './worker.js';
@@ -74,6 +75,23 @@ function job(id: string) {
 }
 
 describe('durable capture recognition', () => {
+  it('atomically stores the AI-corrected preview and crop and changes the media URL after processing', async () => {
+    bytes = await sharp({ create: { width: 80, height: 40, channels: 3, background: '#ff0000' } }).png().toBuffer();
+    const batch = capture(1, 1);
+    await storePhotoPreview(batch.id, batch.photos[0].id, await makePhotoPreview(path.join(batch.directory, batch.photos[0].id)));
+    const before = (await listPhotoHistory(userId, binId, null))[0].preview_url;
+    const result = { ...recognized([batch.photos[0].id], null, 1), photo_rotations: [{ photo_id: batch.photos[0].id, clockwise_degrees: 90 as const }] };
+    result.items[0].regions = [{ photo_id: batch.photos[0].id, box: [0, 0, 0.5, 0.5] }];
+    await processNextCapture({ recognize: async () => result, now: () => new Date(Date.now() + 1000) });
+    expect(job(batch.jobId).state).toBe('applied');
+    const row = getDb().prepare('SELECT preview_jpeg,width,height FROM capture_photo_history').get() as { preview_jpeg: Buffer; width: number; height: number };
+    expect([row.width, row.height]).toEqual([40, 80]);
+    const crop = getDb().prepare('SELECT crop_jpeg FROM observation_photos').get() as { crop_jpeg: Buffer };
+    const metadata = await sharp(crop.crop_jpeg).metadata();
+    expect([metadata.width, metadata.height]).toEqual([20, 40]);
+    expect((await listPhotoHistory(userId, binId, null))[0].preview_url).not.toBe(before);
+    expect(fs.existsSync(batch.directory)).toBe(false);
+  });
   it('keeps a real item crop after original cleanup and removes it with its last photo record', async () => {
     const batch = capture(1, 1);
     const result = recognized([batch.photos[0].id], null, 1);
@@ -94,12 +112,13 @@ describe('durable capture recognition', () => {
     const batch = capture(1, 1);
     await processNextCapture({ recognize: async (input) => {
       await dismissPhotoHistory(batch.id, batch.photos[0].id, userId);
-      return recognized(input.photos.map((photo) => photo.id));
+      return { ...recognized(input.photos.map((photo) => photo.id)), photo_rotations: [{ photo_id: batch.photos[0].id, clockwise_degrees: 90 }] };
     } });
     expect(job(batch.jobId).state).toBe('applied');
     expect(getDb().prepare('SELECT * FROM bin_items').all()).toEqual([]);
     expect(getDb().prepare('SELECT * FROM observations').all()).toEqual([]);
     expect(await listPhotoHistory(userId, binId, null)).toEqual([]);
+    expect(getDb().prepare('SELECT preview_jpeg FROM capture_photo_history').get()).toEqual({ preview_jpeg: null });
     expect(fs.existsSync(batch.directory)).toBe(false);
   });
 

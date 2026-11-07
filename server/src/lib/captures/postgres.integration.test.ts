@@ -87,6 +87,22 @@ async function inventory() {
 }
 
 describe('PostgreSQL capture pipeline', () => {
+  it('commits a corrected photo preview and crop in the original recognition transaction', async () => {
+    const batch = await queued();
+    const before = await request(app).get('/api/captures/history').set('Authorization', `Bearer ${token}`);
+    const result = { ...recognized(batch.photoId, null, 1), photo_rotations: [{ photo_id: batch.photoId, clockwise_degrees: 90 as const }] };
+    await processNextCapture({ recognize: async () => result });
+    const history = await request(app).get('/api/captures/history').set('Authorization', `Bearer ${token}`);
+    const photo = history.body.photos[0];
+    expect(photo.preview_url).not.toBe(before.body.photos[0].preview_url);
+    const preview = await request(app).get(photo.preview_url).set('Authorization', `Bearer ${token}`);
+    const dimensions = await sharp(preview.body).metadata();
+    expect([dimensions.width, dimensions.height]).toEqual([60, 80]);
+    const crop = await request(app).get(photo.items[0].crop_url).set('Authorization', `Bearer ${token}`);
+    const cropDimensions = await sharp(crop.body).metadata();
+    expect(cropDimensions.width).toBeLessThan(cropDimensions.height!);
+    expect(fs.existsSync(captureDirectory(batch.id))).toBe(false);
+  });
   it('deletes a selected result, keeps its photo and restores the other scan supporting the item', async () => {
     const first = await queued();
     await processNextCapture({ recognize: async () => recognized(first.photoId, null, 1) });

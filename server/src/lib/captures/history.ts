@@ -10,7 +10,7 @@ import { normalizeItemName } from './recognition.js';
 
 interface HistoryPhotoRow {
   capture_id: string; photo_id: string; bin_id: string; bin_name: string; location_name: string;
-  captured_at: string; state: string; sequence: number; error_category: string | null; has_preview: number;
+  captured_at: string; updated_at: string; state: string; sequence: number; error_category: string | null; has_preview: number;
 }
 
 interface ObservationRow {
@@ -82,12 +82,12 @@ function aliases(value: string): string[] {
   } catch { return []; }
 }
 
-function previewUrl(captureId: string, photoId: string): string {
-  return `/api/captures/${encodeURIComponent(captureId)}/photos/${encodeURIComponent(photoId)}/preview`;
+function previewUrl(captureId: string, photoId: string, version: string): string {
+  return `/api/captures/${encodeURIComponent(captureId)}/photos/${encodeURIComponent(photoId)}/preview?v=${encodeURIComponent(version)}`;
 }
 
-function cropUrl(observationId: string, photoId: string): string {
-  return `/api/captures/observations/${encodeURIComponent(observationId)}/photos/${encodeURIComponent(photoId)}/crop`;
+function cropUrl(observationId: string, photoId: string, version: string): string {
+  return `/api/captures/observations/${encodeURIComponent(observationId)}/photos/${encodeURIComponent(photoId)}/crop?v=${encodeURIComponent(version)}`;
 }
 
 /** Retained images have a separate bounded budget; never silently evict older history. */
@@ -130,7 +130,7 @@ export async function storePhotoPreview(
 export async function listPhotoHistory(userId: string, binId: string | null, locationId: string | null) {
   const execute = query;
   const rows = (await execute(`SELECT c.id AS capture_id,p.id AS photo_id,c.bin_id,b.name AS bin_name,
-    l.name AS location_name,c.captured_at,c.state,c.sequence,
+    l.name AS location_name,c.captured_at,c.updated_at,c.state,c.sequence,
     (SELECT j.error_category FROM analysis_jobs j WHERE j.capture_id=c.id ORDER BY j.analysis_version DESC LIMIT 1) AS error_category,
     CASE WHEN h.preview_jpeg IS NOT NULL THEN 1 ELSE 0 END AS has_preview
     FROM capture_photos p JOIN capture_batches c ON c.id=p.capture_id
@@ -146,20 +146,20 @@ export async function listPhotoHistory(userId: string, binId: string | null, loc
     FROM observation_photos op JOIN observations o ON o.id=op.observation_id
     WHERE op.capture_id=$1 AND op.photo_id=$2 AND o.dismissed_at IS NULL
     ORDER BY o.name,o.id`;
-  return Promise.all(rows.map(async ({ has_preview, ...photo }) => ({
+  return Promise.all(rows.map(async ({ has_preview, updated_at, ...photo }) => ({
     ...photo,
-    preview_url: has_preview ? previewUrl(photo.capture_id, photo.photo_id) : null,
+    preview_url: has_preview ? previewUrl(photo.capture_id, photo.photo_id, updated_at) : null,
     items: ((await execute(observationsSql, [photo.capture_id, photo.photo_id])).rows as Array<Pick<ObservationRow, 'id' | 'item_id' | 'name' | 'description' | 'aliases_json' | 'quantity'> & { has_crop: number }>).map(
       ({ id, aliases_json, has_crop, ...item }) => ({
         ...item, observation_id: id, aliases: aliases(aliases_json),
-        crop_url: has_crop ? cropUrl(id, photo.photo_id) : null,
+        crop_url: has_crop ? cropUrl(id, photo.photo_id, updated_at) : null,
       }),
     ),
   })));
 }
 
 export async function latestItemMedia(itemId: string, execute: TxQueryFn = query) {
-  const row = (await execute(`SELECT o.id AS observation_id,op.photo_id,op.capture_id,
+  const row = (await execute(`SELECT o.id AS observation_id,op.photo_id,op.capture_id,c.updated_at,
     CASE WHEN op.crop_jpeg IS NOT NULL THEN 1 ELSE 0 END AS has_crop,
     CASE WHEN h.preview_jpeg IS NOT NULL THEN 1 ELSE 0 END AS has_preview
     FROM observations o JOIN capture_batches c ON c.id=o.capture_id
@@ -167,12 +167,12 @@ export async function latestItemMedia(itemId: string, execute: TxQueryFn = query
     JOIN capture_photo_history h ON h.capture_id=op.capture_id AND h.photo_id=op.photo_id
     WHERE o.item_id=$1 AND o.dismissed_at IS NULL AND h.dismissed_at IS NULL AND c.cancelled_at IS NULL AND c.state IN ('applied','superseded')
     ORDER BY c.captured_at DESC,c.sequence DESC,has_crop DESC,has_preview DESC,op.photo_id LIMIT 1`, [itemId])).rows[0] as {
-      observation_id: string; photo_id: string; capture_id: string; has_crop: number; has_preview: number;
+      observation_id: string; photo_id: string; capture_id: string; updated_at: string; has_crop: number; has_preview: number;
     } | undefined;
   return {
     observation_id: row?.observation_id ?? null,
-    crop_url: row?.has_crop ? cropUrl(row.observation_id, row.photo_id) : null,
-    photo_preview_url: row?.has_preview ? previewUrl(row.capture_id, row.photo_id) : null,
+    crop_url: row?.has_crop ? cropUrl(row.observation_id, row.photo_id, row.updated_at) : null,
+    photo_preview_url: row?.has_preview ? previewUrl(row.capture_id, row.photo_id, row.updated_at) : null,
   };
 }
 

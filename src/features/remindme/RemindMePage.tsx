@@ -18,7 +18,7 @@ const labels: Record<PhotoTask['phase'], string> = {
 
 function TaskThumbnail({ task }: { task: PhotoTask }) {
   const [url, setUrl] = useState('');
-  const [failed, setFailed] = useState(false);
+  const [failedSource, setFailedSource] = useState('');
   const blob = task.photos[0]?.blob;
   const photoId = task.photos[0]?.id;
   useEffect(() => {
@@ -27,9 +27,10 @@ function TaskThumbnail({ task }: { task: PhotoTask }) {
     setUrl(objectUrl);
     return () => URL.revokeObjectURL(objectUrl);
   }, [blob]);
-  const source = url || (task.accepted && photoId && task.phase !== 'cancelled'
-    ? `/api/captures/${encodeURIComponent(task.id)}/photos/${encodeURIComponent(photoId)}/preview` : '');
-  return source && !failed ? <img src={source} alt="本次拍摄" onError={() => setFailed(true)} className="h-16 w-16 shrink-0 rounded-lg bg-[var(--bg-active)] object-cover" />
+  const preview = task.accepted && photoId && task.phase !== 'cancelled'
+    ? `/api/captures/${encodeURIComponent(task.id)}/photos/${encodeURIComponent(photoId)}/preview` : '';
+  const source = task.phase === 'done' && preview ? `${preview}?v=recognized` : url || preview;
+  return source && source !== failedSource ? <img src={source} alt="本次拍摄" onError={() => setFailedSource(source)} className="h-16 w-16 shrink-0 rounded-lg bg-[var(--bg-active)] object-cover" />
     : <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-lg bg-[var(--bg-active)] text-[var(--text-tertiary)]"><Camera className="h-5 w-5" /></div>;
 }
 

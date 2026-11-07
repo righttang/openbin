@@ -74,6 +74,16 @@ struct LocalThumbnail: View {
         else { Rectangle().fill(.quaternary).overlay { Image(systemName: "photo").foregroundStyle(.secondary) } }
     }
 }
+struct CaptureThumbnail: View {
+    @EnvironmentObject var store: AppStore
+    let draft: PhotoDraft
+    let queue: CaptureQueue
+    var body: some View {
+        if let photo = store.history.first(where: { $0.capture_id == draft.id && ["applied", "superseded"].contains($0.state) }), let preview = photo.preview_url {
+            RemotePhoto(path: preview)
+        } else { LocalThumbnail(url: queue.thumbnailURL(draft.id)) }
+    }
+}
 struct RemotePhoto: View {
     @EnvironmentObject var store: AppStore
     let path: String?

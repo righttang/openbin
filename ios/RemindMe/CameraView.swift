@@ -9,6 +9,7 @@ final class CameraController: NSObject, ObservableObject, AVCapturePhotoCaptureD
     private let sessionQueue = DispatchQueue(label: "remindme.camera")
     private var configured = false
     private var wantsRunning = false
+    private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
     @Published var ready = false
     @Published var error: String?
     @Published var capturing = false
@@ -37,6 +38,7 @@ final class CameraController: NSObject, ObservableObject, AVCapturePhotoCaptureD
                     self.session.addInput(input); self.session.addOutput(self.output)
                     self.output.maxPhotoQualityPrioritization = .balanced
                     self.session.commitConfiguration(); self.configured = true
+                    self.rotationCoordinator = AVCaptureDevice.RotationCoordinator(device: camera, previewLayer: nil)
                 }
                 self.session.startRunning()
                 DispatchQueue.main.async { self.ready = self.session.isRunning; self.error = nil }
@@ -53,7 +55,8 @@ final class CameraController: NSObject, ObservableObject, AVCapturePhotoCaptureD
         sessionQueue.async {
             let settings = AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.jpeg])
             settings.photoQualityPrioritization = .balanced
-            if let connection = self.output.connection(with: .video), connection.isVideoRotationAngleSupported(90) { connection.videoRotationAngle = 90 }
+            let rotation = self.rotationCoordinator?.videoRotationAngleForHorizonLevelCapture ?? 90
+            if let connection = self.output.connection(with: .video), connection.isVideoRotationAngleSupported(rotation) { connection.videoRotationAngle = rotation }
             self.output.capturePhoto(with: settings, delegate: self)
         }
     }
@@ -132,7 +135,7 @@ struct CameraStrip: View {
                 ForEach(queue.drafts.filter { $0.place.id == place.id && $0.state != "cancelled" }.prefix(8)) { draft in
                     VStack(spacing: 5) {
                         ZStack(alignment: .topTrailing) {
-                            LocalThumbnail(url: queue.thumbnailURL(draft.id)).frame(width: 72, height: 72).clipShape(RoundedRectangle(cornerRadius: 12))
+                            CaptureThumbnail(draft: draft, queue: queue).frame(width: 72, height: 72).clipShape(RoundedRectangle(cornerRadius: 12))
                             Button { removalTarget = draft.id } label: { Image(systemName: "xmark.circle.fill").font(.title3).symbolRenderingMode(.palette).foregroundStyle(.white, .black.opacity(0.7)).frame(width: 44, height: 44) }.accessibilityLabel("取消照片\(draft.id)").disabled(draft.cancelRequested)
                         }
                         Text(draft.label).font(.caption2)

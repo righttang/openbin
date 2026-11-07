@@ -1,5 +1,7 @@
 import XCTest
 import UIKit
+import ImageIO
+import UniformTypeIdentifiers
 @testable import RemindMe
 
 actor FakeCaptureAPI: CaptureTransport {
@@ -238,5 +240,17 @@ extension CaptureQueueTests {
         let data = try PhotoProcessor.jpeg(image(), longestSide: 16)
         let output = try XCTUnwrap(UIImage(data: data)); XCTAssertLessThanOrEqual(max(output.size.width, output.size.height), 16)
         XCTAssertThrowsError(try PhotoProcessor.jpeg(Data("not an image".utf8)))
+    }
+    func testCameraEXIFOrientationIsRenderedIntoPixelsWithoutStretching() throws {
+        let original = try XCTUnwrap(UIImage(data: image())?.cgImage)
+        for (orientation, size) in [(6, CGSize(width: original.height, height: original.width)), (8, CGSize(width: original.height, height: original.width)), (3, CGSize(width: original.width, height: original.height))] {
+            let encoded = NSMutableData()
+            let destination = try XCTUnwrap(CGImageDestinationCreateWithData(encoded, UTType.jpeg.identifier as CFString, 1, nil))
+            CGImageDestinationAddImage(destination, original, [kCGImagePropertyOrientation: orientation] as CFDictionary)
+            XCTAssertTrue(CGImageDestinationFinalize(destination))
+            let result = try XCTUnwrap(UIImage(data: PhotoProcessor.jpeg(encoded as Data)))
+            XCTAssertEqual(result.size, size)
+            XCTAssertEqual(result.imageOrientation, .up)
+        }
     }
 }

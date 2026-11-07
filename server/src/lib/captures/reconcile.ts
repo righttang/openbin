@@ -1,8 +1,8 @@
 import crypto from 'node:crypto';
 import { query, type TxQueryFn } from '../../db.js';
 import { withCaptureTransaction } from './database.js';
-import { baselineCaptureVersion, canStoreHistoryBytes, captureTimestampMs, compareCaptureVersions, sameCaptureContent, saveManualCaptureBaseline } from './history.js';
-import type { ObservationMedia } from './media.js';
+import { baselineCaptureVersion, canStoreHistoryBytes, captureTimestampMs, compareCaptureVersions, sameCaptureContent, saveManualCaptureBaseline, storePhotoPreview } from './history.js';
+import type { ObservationMedia, PhotoPreview } from './media.js';
 import type { ExistingCaptureItem, RecognitionResult } from './recognition.js';
 import { CAPTURE_PROMPT_VERSION, CaptureProcessingError, normalizeItemName } from './recognition.js';
 
@@ -50,7 +50,7 @@ export async function assertCaptureWritable(claim: ClaimedCapture, execute: TxQu
 
 /** Applies observations, stable inventory records and the job result as one short transaction. */
 export async function commitRecognition(
-  claim: ClaimedCapture, result: RecognitionResult, now = new Date(), media: ObservationMedia[][] = [],
+  claim: ClaimedCapture, result: RecognitionResult, now = new Date(), media: ObservationMedia[][] = [], previews = new Map<string, PhotoPreview>(),
 ): Promise<'applied' | 'superseded'> {
   return withCaptureTransaction(async (execute) => {
     const timestamp = now.toISOString();
@@ -66,6 +66,9 @@ export async function commitRecognition(
       SELECT capture_id,id FROM capture_photos WHERE capture_id=$1 ON CONFLICT DO NOTHING`, [claim.captureId]);
     const activePhotos = new Set(((await execute(`SELECT photo_id FROM capture_photo_history
       WHERE capture_id=$1 AND dismissed_at IS NULL`, [claim.captureId])).rows as { photo_id: string }[]).map((p) => p.photo_id));
+    for (const [photoId, preview] of previews) {
+      if (activePhotos.has(photoId)) await storePhotoPreview(claim.captureId, photoId, preview, execute);
+    }
     const current = (await execute('SELECT revision,latest_applied_sequence FROM bin_capture_state WHERE bin_id=$1', [claim.binId])).rows[0] as { revision: number; latest_applied_sequence: number };
     const instant = claim.source === 'web-instant';
     const superseded = !instant && claim.sequence <= current.latest_applied_sequence;

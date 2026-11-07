@@ -5,7 +5,7 @@ import { isRestoreInProgress } from '../restore.js';
 import { cleanupCapture, holdCapture, registerCaptureAbort, sweepCaptures } from './cleanup.js';
 import { captureConfig } from './config.js';
 import { withCaptureTransaction } from './database.js';
-import { prepareObservationMedia } from './media.js';
+import { prepareObservationMedia, prepareRotationPreviews } from './media.js';
 import type { RecognitionPhoto, Recognizer } from './recognition.js';
 import {
   CAPTURE_ANALYSIS_VERSION,
@@ -142,8 +142,9 @@ export async function processNextCapture(options: CaptureWorkerOptions = {}): Pr
       } catch { controller.abort(); }
     }, 10_000);
     heartbeat.unref();
-    const photos = (await execute(`SELECT id,storage_path,size,sha256 FROM capture_photos
-      WHERE capture_id=$1 AND received_at IS NOT NULL AND deleted_at IS NULL ORDER BY position,id`, [claim.captureId])).rows as RecognitionPhoto[];
+    const photos = (await execute(`SELECT p.id,p.storage_path,p.size,p.sha256,length(h.preview_jpeg) AS preview_bytes FROM capture_photos p
+      LEFT JOIN capture_photo_history h ON h.capture_id=p.capture_id AND h.photo_id=p.id
+      WHERE p.capture_id=$1 AND p.received_at IS NOT NULL AND p.deleted_at IS NULL ORDER BY p.position,p.id`, [claim.captureId])).rows as Array<RecognitionPhoto & { preview_bytes: number | null }>;
     const batch = (await execute('SELECT manifest_json FROM capture_batches WHERE id=$1', [claim.captureId])).rows[0] as
       { manifest_json: string | null };
     let manifest: unknown;
@@ -167,9 +168,11 @@ export async function processNextCapture(options: CaptureWorkerOptions = {}): Pr
     const output = await (options.recognize ?? recognizeCapture)(input);
     if (signal.aborted) throw new CaptureProcessingError('worker_interrupted');
     const result = validateRecognition(output, input);
-    const media = await prepareObservationMedia(photos, result.items);
+    const previews = await prepareRotationPreviews(photos, result.photo_rotations ?? []);
+    const rotations = (result.photo_rotations ?? []).filter(rotation => previews.has(rotation.photo_id));
+    const media = await prepareObservationMedia(photos, result.items, rotations);
     if (signal.aborted) throw new CaptureProcessingError('worker_interrupted');
-    await commitRecognition(claim, result, now(), media);
+    await commitRecognition(claim, result, now(), media, previews);
     return true;
   } catch (error) {
     if (claim) await recordFailure(claim, error instanceof CaptureProcessingError ? error : new CaptureProcessingError('internal_error'), now());
