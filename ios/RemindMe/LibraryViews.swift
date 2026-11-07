@@ -100,6 +100,7 @@ struct PhotoDetailView: View {
     @State private var deleting = false
     @State private var error: String?
     private var current: HistoryPhoto { store.history.first { $0.id == photo.id } ?? photo }
+    @State private var removalTarget: Observation?
     private var photos: [HistoryPhoto] {
         let entries = wholeScan ? store.history.filter { $0.capture_id == photo.capture_id } : [current]
         return entries.isEmpty ? [photo] : entries
@@ -115,21 +116,29 @@ struct PhotoDetailView: View {
                 Section("识别出 \(entry.items.count) 类物品") {
                     ForEach(entry.items) { item in
                         let inventory = InventoryItem(id: item.item_id ?? item.id, name: item.name, description: item.description, aliases: item.aliases, quantity: item.quantity, bin_id: entry.bin_id, bin_name: entry.bin_name, last_seen_at: entry.captured_at, crop_url: item.crop_url, photo_preview_url: entry.preview_url)
-                        NavigationLink { ItemDetailView(item: inventory, canDelete: false) } label: { ItemRow(item: inventory) }
+                        HStack(spacing: 12) {
+                            NavigationLink { ItemDetailView(item: inventory, observationID: item.id) } label: { ItemRow(item: inventory) }.accessibilityIdentifier("result.open.\(item.id)")
+                            Button(role: .destructive) { removalTarget = item; confirm = true } label: {
+                                Label("删除", systemImage: "trash").font(.subheadline).frame(minHeight: 44)
+                            }.buttonStyle(.borderless).disabled(deleting).accessibilityLabel("删除识别结果\(item.name)").accessibilityIdentifier("result.delete.\(item.id)")
+                        }
                     }
                     if entry.items.isEmpty { Text(["queued", "processing", "uploading"].contains(entry.state) ? "处理完成后会自动显示结果。" : "这张照片没有识别结果，可以重新拍摄。").font(.subheadline).foregroundStyle(.secondary) }
                 }
             }
             if let error { Text(error).foregroundStyle(.red) }
-            Button(wholeScan ? "删除整次扫描" : "删除这张照片记录", role: .destructive) { confirm = true }.disabled(deleting)
+            Button(wholeScan ? "删除整次扫描" : "删除这张照片记录", role: .destructive) { removalTarget = nil; confirm = true }.disabled(deleting)
         }.listStyle(.plain).navigationTitle("识别结果").navigationBarTitleDisplayMode(.inline)
-            .alert(wholeScan ? "删除整次扫描？" : "删除照片记录？", isPresented: $confirm) {
+            .alert(removalTarget != nil ? "删除识别结果？" : wholeScan ? "删除整次扫描？" : "删除照片记录？", isPresented: $confirm) {
                 Button("确认删除", role: .destructive) {
                     deleting = true
                     Task {
                         do {
-                            if wholeScan { try await store.deleteScan(current) } else { try await store.deletePhoto(current) }
-                            dismiss()
+                            if let result = removalTarget { try await store.deleteObservation(result.id) }
+                            else {
+                                if wholeScan { try await store.deleteScan(current) } else { try await store.deletePhoto(current) }
+                                dismiss()
+                            }
                         }
                         catch { self.error = "删除失败，请重试。" }
                         deleting = false
@@ -137,7 +146,8 @@ struct PhotoDetailView: View {
                 }
                 Button("保留", role: .cancel) { }
             } message: {
-                Text(wholeScan ? "本次扫描的所有照片及其独有识别结果都会删除，其他扫描中的物品会保留。此操作不能撤销。" : "这张照片及其独有识别结果会删除，其他照片中的物品会保留。此操作不能撤销。")
+                if let result = removalTarget { Text("删除这次识别中的“\(result.name)”。照片、其他结果和其他扫描中的记录会保留。") }
+                else { Text(wholeScan ? "本次扫描的所有照片及其独有识别结果都会删除，其他扫描中的物品会保留。此操作不能撤销。" : "这张照片及其独有识别结果会删除，其他照片中的物品会保留。此操作不能撤销。") }
             }
             .task {
                 while !Task.isCancelled && ["uploading", "queued", "processing"].contains(current.state) {

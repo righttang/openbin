@@ -87,6 +87,26 @@ async function inventory() {
 }
 
 describe('PostgreSQL capture pipeline', () => {
+  it('deletes a selected result, keeps its photo and restores the other scan supporting the item', async () => {
+    const first = await queued();
+    await processNextCapture({ recognize: async () => recognized(first.photoId, null, 1) });
+    const original = (await inventory())[0];
+    const second = await queued();
+    await processNextCapture({ recognize: async () => {
+      const result = recognized(second.photoId, original.id, 9);
+      result.items.push({ ...result.items[0], name: 'Correct adapter', existing_item_id: null, quantity: 2 });
+      return result;
+    } });
+    const history = await request(app).get('/api/captures/history').set('Authorization', `Bearer ${token}`);
+    const photo = history.body.photos.find((entry: { capture_id: string }) => entry.capture_id === second.id);
+    const wrong = photo.items.find((entry: { item_id: string }) => entry.item_id === original.id);
+    expect((await request(app).delete(`/api/captures/observations/${wrong.observation_id}`).set('Authorization', `Bearer ${token}`)).body).toEqual({ removed: true, removed_items: 0 });
+    expect((await inventory()).find(item => item.id === original.id)).toMatchObject({ quantity: 1, last_seen_batch_id: first.id });
+    const remaining = await request(app).get('/api/captures/history').set('Authorization', `Bearer ${token}`);
+    expect(remaining.body.photos.find((entry: { capture_id: string }) => entry.capture_id === second.id).items).toMatchObject([{ name: 'Correct adapter' }]);
+    expect((await request(app).get(photo.preview_url).set('Authorization', `Bearer ${token}`)).status).toBe(200);
+    expect((await request(app).get(wrong.crop_url).set('Authorization', `Bearer ${token}`)).status).toBe(404);
+  });
   it('uploads, recognizes, retains BYTEA crops, restores shared evidence and removes exclusive items', async () => {
     const first = await queued();
     expect(await processNextCapture({ recognize: async () => recognized(first.photoId, null, null) })).toBe(true);

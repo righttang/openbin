@@ -27,6 +27,7 @@ struct UndoRecord: Identifiable {
     private(set) var api: APIClient
     private var locationID: String?
     private var removedPhotoIDs: Set<String> = []
+    private var removedObservationIDs: Set<String> = []
     private var scope: URL
     private var refreshing = false
     private var refreshAgain = false
@@ -76,7 +77,11 @@ struct UndoRecord: Identifiable {
             let values = try await (newPlaces, newItems, newHistory)
             places = values.0
             items = values.1.filter { !deletedItemIDs.contains($0.id) }
-            history = values.2.filter { !removedPhotoIDs.contains($0.id) }
+            history = values.2.filter { !removedPhotoIDs.contains($0.id) }.map { photo in
+                var result = photo
+                result.items.removeAll { removedObservationIDs.contains($0.id) }
+                return result
+            }
             queue.reconcileHistory(history)
             if !places.contains(where: { $0.id == selectedPlaceID }) { selectedPlaceID = places.first?.id ?? "" }
             connected = true; error = nil; revision += 1; saveCache()
@@ -95,7 +100,7 @@ struct UndoRecord: Identifiable {
         guard !refreshing else { throw APIError.message("正在刷新，请稍后再试。") }
         queue.stop(); api = candidate; server = url.absoluteString; scope = Self.folder(server)
         queue = CaptureQueue(api: candidate, folder: scope.appendingPathComponent("uploads")); wireQueue()
-        places = []; items = []; history = []; undo = []; deletedItemIDs = []; removedPhotoIDs = []
+        places = []; items = []; history = []; undo = []; deletedItemIDs = []; removedPhotoIDs = []; removedObservationIDs = []
         selectedPlaceID = UserDefaults.standard.string(forKey: "place:\(server)") ?? ""
         UserDefaults.standard.set(server, forKey: "remindme-server")
         loadCache(); await activate()
@@ -166,6 +171,13 @@ struct UndoRecord: Identifiable {
         for entry in history where entry.capture_id == photo.capture_id { removedPhotoIDs.insert(entry.id) }
         history.removeAll { $0.capture_id == photo.capture_id }
         queue.hideDeletedHistory(photo)
+        await refresh()
+    }
+    func deleteObservation(_ id: String) async throws {
+        try await api.mutate("/api/captures/observations/\(id)", method: "DELETE")
+        removedObservationIDs.insert(id)
+        for index in history.indices { history[index].items.removeAll { $0.id == id } }
+        saveCache()
         await refresh()
     }
 }

@@ -77,6 +77,49 @@ final class RemindMeUITests: XCTestCase {
     @MainActor private func expectationForDisappearance(_ element: XCUIElement) -> Bool {
         XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: element)], timeout: 10) == .completed
     }
+    @MainActor func testDeleteWrongRecognitionFromResultList() async throws {
+        guard let raw = ProcessInfo.processInfo.environment["REMINDME_RESULT_FIXTURE"], let data = raw.data(using: .utf8) else { throw XCTSkip("Use ios/scripts/test-local.py for isolated result fixtures") }
+        let fixture = try JSONDecoder().decode([String: String].self, from: data)
+        let captureID = try XCTUnwrap(fixture["captureID"])
+        let wrongID = try XCTUnwrap(fixture["wrongObservationID"])
+        let correctID = try XCTUnwrap(fixture["correctObservationID"])
+        let profile = try await fixtureAPI("/api/auth/me")
+        guard profile["id"] as? String == ProcessInfo.processInfo.environment["REMINDME_EXPECT_TEST_PROFILE"] else { XCTFail("Wrong test profile"); return }
+        let app = XCUIApplication()
+        app.launchEnvironment["REMINDME_TEST_URL"] = "http://127.0.0.1:1453"
+        app.launchArguments += ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
+        app.launch()
+        let scan = app.buttons["scan.open.\(captureID)"]
+        XCTAssertTrue(scan.waitForExistence(timeout: 20)); scan.tap()
+        let wrong = app.buttons["result.delete.\(wrongID)"]
+        XCTAssertTrue(wrong.waitForExistence(timeout: 10))
+        wrong.tap(); XCTAssertTrue(app.alerts.buttons["确认删除"].waitForExistence(timeout: 5))
+        app.alerts.buttons["保留"].tap(); XCTAssertTrue(wrong.exists)
+        let before = XCTAttachment(screenshot: app.screenshot()); before.name = "识别结果单项删除"; before.lifetime = .keepAlways; add(before)
+        wrong.tap(); app.alerts.buttons["确认删除"].tap()
+        XCTAssertTrue(expectationForDisappearance(wrong))
+        XCTAssertTrue(app.buttons["result.open.\(correctID)"].exists)
+        let history = try await fixtureAPI("/api/captures/history?bin_id=\(fixture["placeID"]!)")
+        let photo = try XCTUnwrap((history["photos"] as? [[String: Any]])?.first)
+        XCTAssertEqual(photo["capture_id"] as? String, captureID)
+        XCTAssertEqual((photo["items"] as? [[String: Any]])?.map { $0["observation_id"] as? String }, [correctID])
+        let inventory = try await fixtureAPI("/api/captures/inventory?bin_id=\(fixture["placeID"]!)")
+        XCTAssertFalse((inventory["items"] as? [[String: Any]] ?? []).contains { $0["id"] as? String == fixture["wrongItemID"] })
+        app.terminate(); app.launch()
+        XCTAssertTrue(scan.waitForExistence(timeout: 20)); scan.tap()
+        XCTAssertTrue(app.buttons["result.open.\(correctID)"].waitForExistence(timeout: 10)); XCTAssertFalse(wrong.exists)
+        let after = XCTAttachment(screenshot: app.screenshot()); after.name = "错误结果删除后保留正确结果"; after.lifetime = .keepAlways; add(after)
+        app.buttons["result.open.\(correctID)"].tap()
+        let detailDelete = app.buttons["删除识别结果"]
+        XCTAssertTrue(detailDelete.waitForExistence(timeout: 5)); detailDelete.tap()
+        app.alerts.buttons["保留"].tap(); XCTAssertTrue(detailDelete.exists)
+        detailDelete.tap(); app.alerts.buttons["确认删除"].tap()
+        XCTAssertTrue(expectationForDisappearance(detailDelete))
+        XCTAssertTrue(app.navigationBars["识别结果"].exists)
+        XCTAssertFalse(app.buttons["result.open.\(correctID)"].exists)
+        let empty = try await fixtureAPI("/api/captures/history?bin_id=\(fixture["placeID"]!)")
+        XCTAssertEqual(((empty["photos"] as? [[String: Any]])?.first?["items"] as? [[String: Any]])?.count, 0)
+    }
     @MainActor func testScanFindHistoryAndNoLogin() async throws {
         guard ProcessInfo.processInfo.environment["REMINDME_RUN_UI_TESTS"] == "1" else { throw XCTSkip("Use ios/scripts/test-local.py with the local test server") }
         let profile = try await fixtureAPI("/api/auth/me")

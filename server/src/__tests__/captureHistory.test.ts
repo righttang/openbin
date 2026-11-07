@@ -75,6 +75,34 @@ function remove(capture: Awaited<ReturnType<typeof batch>>, photoId = capture.ph
 }
 
 describe('photo recognition history', () => {
+  it('removes one wrong result from every photo while keeping the photos and correct results', async () => {
+    const capture = await batch(1, 2);
+    const wrong = observe(capture, undefined, 'Wrong item');
+    const correct = observe(capture, undefined, 'Correct item', 2, [capture.photoIds[0]]);
+    const path = `/api/captures/observations/${wrong.observationId}`;
+    expect((await request(app).delete(path).set('Authorization', `Bearer ${token}`)).body).toEqual({ removed: true, removed_items: 1 });
+    expect((await request(app).delete(path).set('Authorization', `Bearer ${token}`)).body).toEqual({ removed: true, removed_items: 0 });
+    const history = await request(app).get('/api/captures/history').set('Authorization', `Bearer ${token}`);
+    expect(history.body.photos).toHaveLength(2);
+    expect(history.body.photos.flatMap((photo: { items: unknown[] }) => photo.items)).toMatchObject([{ observation_id: correct.observationId }]);
+    expect((await request(app).get(history.body.photos[0].preview_url).set('Authorization', `Bearer ${token}`)).status).toBe(200);
+    expect((await request(app).get(`/api/captures/observations/${wrong.observationId}/photos/${capture.photoIds[0]}/crop`).set('Authorization', `Bearer ${token}`)).status).toBe(404);
+    expect((await request(app).get('/api/captures/inventory').set('Authorization', `Bearer ${token}`)).body.items.map((item: { id: string }) => item.id)).toEqual([correct.itemId]);
+  });
+
+  it('restores another scan when its latest recognition result is deleted and preserves manual corrections', async () => {
+    const older = await batch(1);
+    const item = observe(older, undefined, 'Correct cable', 1);
+    const latest = await batch(2);
+    const wrong = observe(latest, item.itemId, 'Wrong cable', 9);
+    expect((await request(app).delete(`/api/captures/observations/${wrong.observationId}`).set('Authorization', `Bearer ${token}`)).body.removed_items).toBe(0);
+    expect(getDb().prepare('SELECT name,quantity,last_seen_batch_id FROM bin_items WHERE id=?').get(item.itemId))
+      .toEqual({ name: 'Correct cable', quantity: 1, last_seen_batch_id: older.id });
+    getDb().prepare('UPDATE bin_items SET name=?,updated_at=? WHERE id=?').run('Manual label', '2026-11-01T00:00:00.000Z', item.itemId);
+    await request(app).delete(`/api/captures/observations/${item.observationId}`).set('Authorization', `Bearer ${token}`);
+    expect(getDb().prepare('SELECT name,deleted_at FROM bin_items WHERE id=?').get(item.itemId)).toEqual({ name: 'Manual label', deleted_at: null });
+  });
+
   it('groups results by photo and serves authorized previews and item crops', async () => {
     const capture = await batch(1, 2);
     const first = observe(capture, undefined, 'Headphones', 1, [capture.photoIds[0]]);

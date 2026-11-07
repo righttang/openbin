@@ -4,7 +4,7 @@ import { asyncHandler } from '../lib/asyncHandler.js';
 import { verifyBinAccess } from '../lib/binAccess.js';
 import { cancelCapture } from '../lib/captures/cancel.js';
 import { captureConfig, supportedMimeTypes } from '../lib/captures/config.js';
-import { dismissPhotoHistory, latestItemMedia, listPhotoHistory } from '../lib/captures/history.js';
+import { dismissObservation, dismissPhotoHistory, latestItemMedia, listPhotoHistory } from '../lib/captures/history.js';
 import { authorizeCapture, captureStatus, completeCapture, createCapture, receivePhoto } from '../lib/captures/store.js';
 import { NotFoundError, ValidationError } from '../lib/httpErrors.js';
 import { authenticate } from '../middleware/auth.js';
@@ -91,6 +91,10 @@ router.get('/observations/:observationId/photos/:photoId/crop', asyncHandler(asy
 
 router.delete('/:id/photos/:photoId/history', asyncHandler(async (req, res) => {
   res.json(await dismissPhotoHistory(req.params.id, req.params.photoId, req.user!.id));
+}));
+
+router.delete('/observations/:observationId', asyncHandler(async (req, res) => {
+  res.json(await dismissObservation(req.params.observationId, req.user!.id));
 }));
 
 router.get('/', asyncHandler(async (req, res) => {

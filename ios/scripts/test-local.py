@@ -37,7 +37,15 @@ for target in targets:
     if not isinstance(target, dict) or target.get('BlueprintName') not in ('RemindMeTests', 'RemindMeUITests'):
         continue
     target.setdefault('EnvironmentVariables', {}).update(REMINDME_RUN_API_TESTS='1', REMINDME_RUN_UI_TESTS='1', REMINDME_EXPECT_TEST_PROFILE=expected)
-runfile.write_bytes(plistlib.dumps(data))
-result = repo / 'ios/build' / ('Local-' + datetime.datetime.now().strftime('%Y%m%d-%H%M%S') + '.xcresult')
-subprocess.run(['xcodebuild', 'test-without-building', '-xctestrun', str(runfile), '-destination', destination, '-parallel-testing-enabled', 'NO', '-resultBundlePath', str(result)], cwd=repo, check=True)
+fixture_command = ['node', '--env-file=.env', 'ios/scripts/result-fixture.mjs']
+fixture = json.loads(subprocess.check_output(fixture_command + ['prepare', profile['id'], profile['activeLocationId']], cwd=repo, text=True))
+try:
+    for target in targets:
+        if isinstance(target, dict) and target.get('BlueprintName') == 'RemindMeUITests':
+            target['EnvironmentVariables']['REMINDME_RESULT_FIXTURE'] = json.dumps(fixture)
+    runfile.write_bytes(plistlib.dumps(data))
+    result = repo / 'ios/build' / ('Local-' + datetime.datetime.now().strftime('%Y%m%d-%H%M%S') + '.xcresult')
+    subprocess.run(['xcodebuild', 'test-without-building', '-xctestrun', str(runfile), '-destination', destination, '-parallel-testing-enabled', 'NO', '-resultBundlePath', str(result)], cwd=repo, check=True)
+finally:
+    subprocess.run(fixture_command + ['cleanup', profile['id'], profile['activeLocationId'], fixture['placeID']], cwd=repo, check=True)
 print('Verified native app. XCTest results:', result)

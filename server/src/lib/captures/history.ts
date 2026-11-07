@@ -231,6 +231,27 @@ export async function dismissPhotoHistory(captureId: string, photoId: string, us
   return withCaptureTransaction(execute => dismissPhotoEvidence(captureId, photoId, batch.bin_id, execute));
 }
 
+/** Dismiss one wrong result while retaining its photo and all other results. */
+export async function dismissObservation(observationId: string, userId: string) {
+  const record = (await query<{ bin_id: string }>(`SELECT c.bin_id FROM observations o
+    JOIN capture_batches c ON c.id=o.capture_id WHERE o.id=$1`, [observationId])).rows[0];
+  const access = record ? await verifyBinAccess(record.bin_id, userId) : null;
+  if (!record || !access) throw new NotFoundError('Recognition result not found');
+  await requireMemberOrAbove(access.locationId, userId, 'remove recognition result');
+  await requireCreatorOrAdmin(access.locationId, userId, access.createdBy, 'remove recognition result');
+  return withCaptureTransaction(async execute => {
+    const observation = (await execute<{ item_id: string | null; dismissed_at: string | null }>(
+      'SELECT item_id,dismissed_at FROM observations WHERE id=$1', [observationId],
+    )).rows[0];
+    if (!observation) throw new NotFoundError('Recognition result not found');
+    if (observation.dismissed_at) return { removed: true, removed_items: 0 };
+    const now = new Date().toISOString();
+    await execute('UPDATE observations SET dismissed_at=$1 WHERE id=$2', [now, observationId]);
+    await execute('UPDATE observation_photos SET crop_jpeg=NULL,bbox_json=NULL WHERE observation_id=$1', [observationId]);
+    return retractDismissedItems(observation.item_id ? [{ item_id: observation.item_id }] : [], record.bin_id, now, execute);
+  });
+}
+
 /** Caller owns one capture transaction, allowing all photos to be cancelled atomically. */
 export async function dismissPhotoEvidence(captureId: string, photoId: string, binId: string, execute: TxQueryFn) {
   const photo = (await execute('SELECT id FROM capture_photos WHERE capture_id=$1 AND id=$2', [captureId, photoId])).rows[0];
@@ -246,6 +267,10 @@ export async function dismissPhotoEvidence(captureId: string, photoId: string, b
   await execute(`UPDATE observations SET dismissed_at=$1 WHERE capture_id=$2 AND dismissed_at IS NULL AND NOT EXISTS (
     SELECT 1 FROM observation_photos op JOIN capture_photo_history h ON h.capture_id=op.capture_id AND h.photo_id=op.photo_id
     WHERE op.observation_id=observations.id AND h.dismissed_at IS NULL)`, [now, captureId]);
+  return retractDismissedItems(affected, binId, now, execute);
+}
+
+async function retractDismissedItems(affected: { item_id: string }[], binId: string, now: string, execute: TxQueryFn) {
   let removedItems = 0;
   for (const { item_id: itemId } of affected) {
     const item = (await execute('SELECT * FROM bin_items WHERE id=$1', [itemId])).rows[0] as InventoryRow | undefined;

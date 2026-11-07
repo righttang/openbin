@@ -30,7 +30,7 @@ struct HistoryPhoto: Codable, Identifiable, Hashable {
     let captured_at: String
     let state: String
     let preview_url: String?
-    let items: [Observation]
+    var items: [Observation]
 }
 struct Observation: Codable, Identifiable, Hashable {
     var id: String { observation_id }

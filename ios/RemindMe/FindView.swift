@@ -71,6 +71,7 @@ struct ItemDetailView: View {
     @Environment(\.dismiss) private var dismiss
     let item: InventoryItem
     var canDelete = true
+    var observationID: String? = nil
     @State private var deleting = false
     @State private var confirmDeletion = false
     var body: some View {
@@ -87,19 +88,28 @@ struct ItemDetailView: View {
                 if !item.aliases.isEmpty { Text(item.aliases.joined(separator: " · ")).font(.footnote).foregroundStyle(.secondary) }
                 Text("后续照片里没出现，也会保留这里的最后记录。").font(.footnote).foregroundStyle(.secondary)
                 if canDelete {
-                    Button("删除物品", role: .destructive) { confirmDeletion = true }
+                    Button(observationID == nil ? "删除物品" : "删除识别结果", role: .destructive) { confirmDeletion = true }
                         .frame(maxWidth: .infinity).padding(.vertical).disabled(deleting)
                 }
             }.padding(20)
         }.navigationTitle(item.name).navigationBarTitleDisplayMode(.inline)
-            .alert("删除物品？", isPresented: $confirmDeletion) {
+            .alert(observationID == nil ? "删除物品？" : "删除识别结果？", isPresented: $confirmDeletion) {
                 Button("确认删除", role: .destructive) {
                     deleting = true
-                    Task { await store.deleteItem(item); deleting = false; if store.deletedItemIDs.contains(item.id) { dismiss() } }
+                    Task {
+                        defer { deleting = false }
+                        if let observationID {
+                            do { try await store.deleteObservation(observationID); dismiss() }
+                            catch { store.error = "删除失败，识别结果仍保留，请重试。" }
+                        } else {
+                            await store.deleteItem(item)
+                            if store.deletedItemIDs.contains(item.id) { dismiss() }
+                        }
+                    }
                 }
                 Button("保留", role: .cancel) { }
             } message: {
-                Text("将删除“\(item.name)”，删除后可以撤销。")
+                Text(observationID == nil ? "将删除“\(item.name)”，删除后可以撤销。" : "删除这次识别中的“\(item.name)”。照片、其他结果和其他扫描中的记录会保留。")
             }
     }
 }

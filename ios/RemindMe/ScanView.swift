@@ -67,7 +67,7 @@ struct ScanView: View {
                                     }
                                     Spacer(minLength: 0)
                                 }
-                            }.buttonStyle(.plain).disabled(!store.history.contains(where: { $0.capture_id == draft.id }))
+                            }.buttonStyle(.plain).disabled(!store.history.contains(where: { $0.capture_id == draft.id })).accessibilityIdentifier("scan.open.\(draft.id)")
                             if draft.error != nil || draft.state == "expired" { Button { queue.retry(draft.id) } label: { Image(systemName: "arrow.clockwise").frame(width: 44, height: 44) }.accessibilityLabel("重试照片") }
                             Button(role: .destructive) { removalTarget = draft.id } label: {
                                 Label(draft.pending ? "取消" : "删除", systemImage: draft.pending ? "xmark" : "trash")
@@ -86,7 +86,7 @@ struct ScanView: View {
                                     }
                                     Spacer(minLength: 0)
                                 }.foregroundStyle(.primary)
-                            }.buttonStyle(.plain)
+                            }.buttonStyle(.plain).accessibilityIdentifier("scan.open.\(photo.capture_id)")
                             Button(role: .destructive) { removalTarget = photo.capture_id } label: {
                                 if deletingScans.contains(photo.capture_id) { ProgressView().frame(minWidth: 44, minHeight: 44) }
                                 else { Label("删除", systemImage: "trash").font(.subheadline).frame(minHeight: 44) }
