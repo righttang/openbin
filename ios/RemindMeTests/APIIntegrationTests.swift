@@ -20,6 +20,69 @@ final class APIIntegrationTests: XCTestCase {
             XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
         }
     }
+    @MainActor func testLocalBackgroundTransferContinuesAfterPollingStops() async throws {
+        guard ProcessInfo.processInfo.environment["REMINDME_RUN_API_TESTS"] == "1" else { throw XCTSkip("Use the local test server") }
+        let api = APIClient(baseURL: URL(string: "http://127.0.0.1:1453")!)
+        let profile = try await api.connect()
+        guard profile.id == ProcessInfo.processInfo.environment["REMINDME_EXPECT_TEST_PROFILE"] else { XCTFail("Wrong test profile"); return }
+        let raw = try await api.mutate("/api/bins", body: ["name": "系统后台上传验收", "locationId": profile.activeLocationId])
+        let place = try JSONDecoder().decode(Place.self, from: raw)
+        let folder = AppStore.folder("http://127.0.0.1:1453").appendingPathComponent("uploads")
+        let queue = CaptureQueue(api: api, folder: folder, backgroundUploader: BackgroundPhotoUploader.shared)
+        let jpeg = UIGraphicsImageRenderer(size: CGSize(width: 32, height: 24)).jpegData(withCompressionQuality: 0.8) { ctx in UIColor.green.setFill(); ctx.fill(CGRect(x: 0, y: 0, width: 32, height: 24)) }
+        var draftID: String?
+        do {
+            queue.start(); try queue.enqueue(jpeg: jpeg, place: place)
+            let id = try XCTUnwrap(queue.drafts.first(where: { $0.place.id == place.id })?.id); draftID = id
+            queue.stop() // OS file transfers continue; foreground polling is stopped.
+            for _ in 0..<120 {
+                if queue.drafts.first(where: { $0.id == id })?.accepted == true { break }
+                try await Task.sleep(for: .milliseconds(250))
+            }
+            XCTAssertEqual(queue.drafts.first(where: { $0.id == id })?.accepted, true)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: queue.photoURL(id).path))
+            let server = try await api.capture(id); XCTAssertTrue(server.accepted)
+            queue.cancel(id)
+            for _ in 0..<120 {
+                if queue.drafts.first(where: { $0.id == id })?.state == "cancelled" { break }
+                try await Task.sleep(for: .milliseconds(250))
+            }
+            XCTAssertEqual(queue.drafts.first(where: { $0.id == id })?.state, "cancelled")
+        } catch {
+            if let draftID { try? await api.cancel(draftID, placeID: place.id) }
+            _ = try? await api.mutate("/api/bins/\(place.id)", method: "DELETE"); queue.stop(); throw error
+        }
+        queue.stop()
+        if let draftID { try? await api.cancel(draftID, placeID: place.id) }
+        try await api.mutate("/api/bins/\(place.id)", method: "DELETE")
+        if let draftID { for ext in ["json", "jpg", "thumb.jpg", "cancel"] { try? FileManager.default.removeItem(at: folder.appendingPathComponent(draftID + "." + ext)) } }
+    }
+    func testLocalSingleRequestUploadIsQueuedByServerWithoutClientCompletion() async throws {
+        guard ProcessInfo.processInfo.environment["REMINDME_RUN_API_TESTS"] == "1" else { throw XCTSkip("Use the local test server") }
+        let api = APIClient(baseURL: URL(string: "http://127.0.0.1:1453")!)
+        let profile = try await api.connect()
+        guard profile.id == ProcessInfo.processInfo.environment["REMINDME_EXPECT_TEST_PROFILE"] else { XCTFail("Wrong test profile"); return }
+        let data = try await api.mutate("/api/bins", body: ["name": "后台队列验收", "locationId": profile.activeLocationId])
+        let place = try JSONDecoder().decode(Place.self, from: data)
+        do {
+            let jpeg = await MainActor.run { UIGraphicsImageRenderer(size: CGSize(width: 32, height: 24)).jpegData(withCompressionQuality: 0.8) { ctx in UIColor.blue.setFill(); ctx.fill(CGRect(x: 0, y: 0, width: 32, height: 24)) } }
+            let draft = PhotoDraft(id: UUID().uuidString.lowercased(), photo: .init(id: UUID().uuidString.lowercased(), sha256: SHA256.hash(data: jpeg).map { String(format: "%02x", $0) }.joined(), size: jpeg.count, order: 0), place: place, capturedAt: captureTimestamp())
+            let file = FileManager.default.temporaryDirectory.appendingPathComponent(draft.id + ".jpg")
+            try jpeg.write(to: file); defer { try? FileManager.default.removeItem(at: file) }
+            let built = try await api.instantPhotoRequest(draft)
+            let request = try XCTUnwrap(built)
+            let (reply, response) = try await URLSession.shared.upload(for: request, fromFile: file)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+            let queued = try JSONDecoder().decode(Capture.self, from: reply)
+            XCTAssertTrue(queued.accepted)
+            let check = try await api.capture(draft.id); XCTAssertTrue(check.accepted)
+            try await api.cancel(draft.id, placeID: place.id)
+            let cancelled = try await api.capture(draft.id); XCTAssertEqual(cancelled.state, "cancelled")
+        } catch {
+            _ = try? await api.mutate("/api/bins/\(place.id)", method: "DELETE"); throw error
+        }
+        try await api.mutate("/api/bins/\(place.id)", method: "DELETE")
+    }
     /// Deliberately fixed to Mac localhost. This test must never write to Tomubuntu.
     func testLocalPostgresWithoutLoginPlaceLifecycleAndPhotoCancellation() async throws {
         guard ProcessInfo.processInfo.environment["REMINDME_RUN_API_TESTS"] == "1" else { throw XCTSkip("Set REMINDME_RUN_API_TESTS=1 with the local test server running") }

@@ -19,9 +19,16 @@ enum APIError: LocalizedError {
 protocol CaptureTransport: Sendable {
     func create(_ draft: PhotoDraft) async throws -> Capture
     func upload(_ draft: PhotoDraft, file: URL) async throws
+    func instantPhotoRequest(_ draft: PhotoDraft) async throws -> URLRequest?
+    func cancellationRequest(_ draft: PhotoDraft) async throws -> URLRequest?
     func complete(_ draft: PhotoDraft) async throws -> Capture
     func capture(_ id: String) async throws -> Capture
     func cancel(_ id: String, placeID: String) async throws
+}
+
+extension CaptureTransport {
+    func instantPhotoRequest(_ draft: PhotoDraft) async throws -> URLRequest? { nil }
+    func cancellationRequest(_ draft: PhotoDraft) async throws -> URLRequest? { nil }
 }
 
 /// No account, bearer token or model key. The ordinary LAN session supplies CSRF protection.
@@ -106,8 +113,37 @@ actor APIClient: CaptureTransport {
         let data = try await mutate("/api/captures", body: ["id": draft.id, "bin_id": draft.place.id, "source": "web-instant", "device_id": "ios", "captured_at": draft.capturedAt])
         return try JSONDecoder().decode(Capture.self, from: data)
     }
+    func instantPhotoRequest(_ draft: PhotoDraft) async throws -> URLRequest? {
+        if csrf == nil { csrf = UUID().uuidString }
+        var request = URLRequest(url: url("/api/captures/\(draft.id)/instant-photo/\(draft.photo.id)"))
+        request.httpMethod = "PUT"; request.timeoutInterval = 120
+        request.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
+        request.setValue("openbin-csrf=\(csrf!)", forHTTPHeaderField: "Cookie")
+        request.setValue(csrf!, forHTTPHeaderField: "X-CSRF-Token")
+        request.setValue(draft.photo.sha256, forHTTPHeaderField: "X-Photo-SHA256")
+        request.setValue(String(draft.photo.size), forHTTPHeaderField: "X-Photo-Size")
+        request.setValue(draft.place.id, forHTTPHeaderField: "X-Bin-ID")
+        request.setValue(draft.capturedAt, forHTTPHeaderField: "X-Captured-At")
+        return request
+    }
+    func cancellationRequest(_ draft: PhotoDraft) async throws -> URLRequest? {
+        if csrf == nil { csrf = UUID().uuidString }
+        var request = URLRequest(url: url("/api/captures/\(draft.id)/cancel")); request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("openbin-csrf=\(csrf!)", forHTTPHeaderField: "Cookie"); request.setValue(csrf!, forHTTPHeaderField: "X-CSRF-Token")
+        return request
+    }
     func upload(_ draft: PhotoDraft, file: URL) async throws {
-        _ = try await raw("/api/captures/\(draft.id)/photos/\(draft.photo.id)", method: "PUT", body: Data(contentsOf: file), headers: ["Content-Type": "image/jpeg", "X-Photo-SHA256": draft.photo.sha256, "X-Photo-Size": String(draft.photo.size)])
+        if csrf == nil { let _: LocalProfile = try await profile() }
+        var request = URLRequest(url: url("/api/captures/\(draft.id)/photos/\(draft.photo.id)")); request.httpMethod = "PUT"
+        request.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
+        request.setValue("openbin-csrf=\(csrf ?? "")", forHTTPHeaderField: "Cookie"); request.setValue(csrf, forHTTPHeaderField: "X-CSRF-Token")
+        request.setValue(draft.photo.sha256, forHTTPHeaderField: "X-Photo-SHA256"); request.setValue(String(draft.photo.size), forHTTPHeaderField: "X-Photo-Size")
+        let (data, response) = try await session.upload(for: request, fromFile: file)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            let error = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            throw APIError.response((response as? HTTPURLResponse)?.statusCode ?? 0, error?["message"] as? String ?? "上传失败", code: error?["error"] as? String)
+        }
     }
     func complete(_ draft: PhotoDraft) async throws -> Capture {
         let manifest = try JSONSerialization.jsonObject(with: JSONEncoder().encode(draft.photo))

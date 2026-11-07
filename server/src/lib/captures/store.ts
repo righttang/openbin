@@ -142,7 +142,7 @@ function assertUploadable(batch: CaptureBatch) {
   if (batch.expires_at <= new Date().toISOString()) throw new HttpError(410, 'CAPTURE_EXPIRED', 'Capture expired. Start a new capture.');
 }
 
-export async function receivePhoto(req: Request, captureId: string, photoId: string, userId: string) {
+export async function receivePhoto(req: Request, captureId: string, photoId: string, userId: string, queueAfterUpload = false) {
   requireId(photoId, 'photoId');
   assertNotCancelled(await authorizeCapture(captureId, userId, true));
   const sha256 = req.header('X-Photo-SHA256')?.toLowerCase();
@@ -170,6 +170,7 @@ export async function receivePhoto(req: Request, captureId: string, photoId: str
       const current = await getCapture(captureId, execute);
       assertNotCancelled(current);
       if (existing.received_at && (current.state !== 'uploading' || fs.existsSync(existing.storage_path))) {
+        if (queueAfterUpload) await completeCapture(captureId, [{ id: photoId, sha256, size, order: 0 }], userId);
         return { id: photoId, sha256, size, received_at: existing.received_at };
       }
       if (existing.received_at) await execute('UPDATE capture_photos SET received_at = NULL WHERE capture_id = $1 AND id = $2', [captureId, photoId]);
@@ -246,6 +247,7 @@ export async function receivePhoto(req: Request, captureId: string, photoId: str
         assertUploadable(await getCapture(captureId, execute));
         await storePhotoPreview(captureId, photoId, preview, execute);
         await execute('UPDATE capture_photos SET received_at = $1 WHERE capture_id = $2 AND id = $3', [receivedAt, captureId, photoId]);
+        if (queueAfterUpload) await sealReceivedCapture(captureId, [{ id: photoId, sha256, size, order: 0 }], execute);
       });
       return { id: photoId, sha256, size, received_at: receivedAt };
     } catch (error) {
@@ -289,28 +291,31 @@ export function parseManifest(value: unknown): PhotoManifestEntry[] {
 export async function completeCapture(id: string, input: unknown, userId: string) {
   await authorizeCapture(id, userId, true);
   const manifest = parseManifest(input);
-  const serialized = JSON.stringify(manifest);
-  await withCaptureTransaction(async (execute) => {
-    const batch = await getCapture(id, execute);
-    assertNotCancelled(batch);
-    if (batch.manifest_json !== null) {
-      if (batch.manifest_json !== serialized) throw new ConflictError('The sealed photo manifest cannot change');
-      return;
-    }
-    assertUploadable(batch);
-    const received = (await execute('SELECT * FROM capture_photos WHERE capture_id = $1', [id])).rows as CapturePhoto[];
-    if (received.length !== manifest.length) throw new ConflictError('Not all declared photos have been received');
-    for (const photo of manifest) {
-      const found = received.find(p => p.id === photo.id);
-      if (!found?.received_at || found.deleted_at || found.sha256 !== photo.sha256 || found.size !== photo.size || !fs.existsSync(found.storage_path)) {
-        throw new ConflictError('Not all declared photos have been received');
-      }
-      await execute('UPDATE capture_photos SET position = $1 WHERE capture_id = $2 AND id = $3', [photo.order, id, photo.id]);
-    }
-    const now = new Date().toISOString();
-    await execute("UPDATE capture_batches SET manifest_json = $1, state = 'queued', received_at = $2, updated_at = $3 WHERE id = $4", [serialized, now, now, id]);
-    await execute(`INSERT INTO analysis_jobs (id,capture_id,analysis_version,state,next_attempt_at,created_at,updated_at)
-      VALUES ($1,$2,1,'queued',$3,$4,$5) ON CONFLICT(capture_id,analysis_version) DO NOTHING`, [crypto.randomUUID(), id, now, now, now]);
-  });
+  await withCaptureTransaction(execute => sealReceivedCapture(id, manifest, execute));
   return captureStatus(id);
+}
+
+/** Receipt and native queue entry commit together, even if the client disappears. */
+async function sealReceivedCapture(id: string, manifest: PhotoManifestEntry[], execute: TxQueryFn) {
+  const serialized = JSON.stringify(manifest);
+  const batch = await getCapture(id, execute);
+  assertNotCancelled(batch);
+  if (batch.manifest_json !== null) {
+    if (batch.manifest_json !== serialized) throw new ConflictError('The sealed photo manifest cannot change');
+    return;
+  }
+  assertUploadable(batch);
+  const received = (await execute('SELECT * FROM capture_photos WHERE capture_id = $1', [id])).rows as CapturePhoto[];
+  if (received.length !== manifest.length) throw new ConflictError('Not all declared photos have been received');
+  for (const photo of manifest) {
+    const found = received.find(p => p.id === photo.id);
+    if (!found?.received_at || found.deleted_at || found.sha256 !== photo.sha256 || found.size !== photo.size || !fs.existsSync(found.storage_path)) {
+      throw new ConflictError('Not all declared photos have been received');
+    }
+    await execute('UPDATE capture_photos SET position = $1 WHERE capture_id = $2 AND id = $3', [photo.order, id, photo.id]);
+  }
+  const now = new Date().toISOString();
+  await execute("UPDATE capture_batches SET manifest_json = $1, state = 'queued', received_at = $2, updated_at = $3 WHERE id = $4", [serialized, now, now, id]);
+  await execute(`INSERT INTO analysis_jobs (id,capture_id,analysis_version,state,next_attempt_at,created_at,updated_at)
+    VALUES ($1,$2,1,'queued',$3,$4,$5) ON CONFLICT(capture_id,analysis_version) DO NOTHING`, [crypto.randomUUID(), id, now, now, now]);
 }

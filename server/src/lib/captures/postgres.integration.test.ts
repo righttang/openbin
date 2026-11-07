@@ -87,6 +87,58 @@ async function inventory() {
 }
 
 describe('PostgreSQL capture pipeline', () => {
+  it('queues a burst on the server as soon as each file arrives and processes it without client completion calls', async () => {
+    const captures = Array.from({ length: 12 }, () => ({ id: crypto.randomUUID(), photoId: crypto.randomUUID() }));
+    for (const batch of captures) {
+      const response = await request(app).put(`/api/captures/${batch.id}/instant-photo/${batch.photoId}`)
+        .set('Authorization', `Bearer ${token}`).set('Content-Type', 'image/png')
+        .set('X-Photo-SHA256', hash).set('X-Photo-Size', String(png.length)).set('X-Bin-ID', binId)
+        .set('X-Captured-At', '2026-11-07T08:00:00.000Z').send(png);
+      expect(response.status).toBe(200); expect(response.body.state).toBe('queued');
+    }
+    expect((await query("SELECT COUNT(*) AS n FROM analysis_jobs WHERE state='queued'")).rows[0].n).toBe(12);
+    // From here there are no client requests: only the independent server worker runs.
+    for (let i = 0; i < captures.length; i++) {
+      expect(await processNextCapture({ recognize: async input => recognized(input.photos[0].id) })).toBe(true);
+    }
+    expect((await query("SELECT COUNT(*) AS n FROM capture_batches WHERE state='applied'")).rows[0].n).toBe(12);
+  });
+  it('retries an acknowledged native upload without duplicating jobs or recognition, including after original cleanup', async () => {
+    const batch = { id: crypto.randomUUID(), photoId: crypto.randomUUID() };
+    const upload = () => request(app).put(`/api/captures/${batch.id}/instant-photo/${batch.photoId}`)
+      .set('Authorization', `Bearer ${token}`).set('Content-Type', 'image/png')
+      .set('X-Photo-SHA256', hash).set('X-Photo-Size', String(png.length)).set('X-Bin-ID', binId)
+      .set('X-Captured-At', '2026-11-07T08:00:00.000Z').send(png);
+    expect((await upload()).body.state).toBe('queued');
+    expect((await upload()).body.state).toBe('queued');
+    await processNextCapture({ recognize: async () => recognized(batch.photoId) });
+    expect((await upload()).body.state).toBe('applied');
+    expect((await query('SELECT COUNT(*) AS n FROM analysis_jobs')).rows[0].n).toBe(1);
+    expect((await query('SELECT COUNT(*) AS n FROM observations')).rows[0].n).toBe(1);
+    expect(fs.existsSync(captureDirectory(batch.id))).toBe(false);
+    expect((await request(app).post(`/api/captures/${batch.id}/cancel`).set('Authorization', `Bearer ${token}`).send({ bin_id: binId })).body.state).toBe('cancelled');
+    expect((await upload()).status).toBe(410);
+    expect(await inventory()).toEqual([]);
+  });
+  it('reports an expired native upload distinctly so the client can preserve and replace its original', async () => {
+    const batch = (await request(app).post('/api/captures').set('Authorization', `Bearer ${token}`).send({ id: crypto.randomUUID(), bin_id: binId, source: 'web-instant', device_id: 'ios' })).body;
+    await query("UPDATE capture_batches SET state='expired' WHERE id=$1", [batch.id]);
+    const response = await request(app).put(`/api/captures/${batch.id}/instant-photo/${crypto.randomUUID()}`)
+      .set('Authorization', `Bearer ${token}`).set('Content-Type', 'image/png')
+      .set('X-Photo-SHA256', hash).set('X-Photo-Size', String(png.length)).set('X-Bin-ID', binId).send(png);
+    expect(response.status).toBe(410); expect(response.body.error).toBe('CAPTURE_EXPIRED');
+    expect((await query('SELECT COUNT(*) AS n FROM analysis_jobs')).rows[0].n).toBe(0);
+  });
+  it('keeps cancellation effective even when it reaches the server before a background photo upload', async () => {
+    const batch = { id: crypto.randomUUID(), photoId: crypto.randomUUID() };
+    const cancelled = await request(app).post(`/api/captures/${batch.id}/cancel`).set('Authorization', `Bearer ${token}`).send({ bin_id: binId });
+    expect(cancelled.body.state).toBe('cancelled');
+    const upload = await request(app).put(`/api/captures/${batch.id}/instant-photo/${batch.photoId}`)
+      .set('Authorization', `Bearer ${token}`).set('Content-Type', 'image/png')
+      .set('X-Photo-SHA256', hash).set('X-Photo-Size', String(png.length)).set('X-Bin-ID', binId).send(png);
+    expect(upload.status).toBe(410);
+    expect((await query('SELECT COUNT(*) AS n FROM analysis_jobs')).rows[0].n).toBe(0);
+  });
   it('updates spoken place notes without moving its inventory or reordering history', async () => {
     const batch = await queued();
     await processNextCapture({ recognize: async () => recognized(batch.photoId, null, 2) });

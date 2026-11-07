@@ -68,7 +68,7 @@ struct PhotoDraft: Codable, Identifiable {
     var pending: Bool { !["applied", "superseded", "cancelled", "expired"].contains(state) && !(accepted && state == "failed") }
     var label: String {
         if cancelRequested { return state == "cancelled" ? "已取消" : "等待取消" }
-        return ["waiting": "等待上传", "uploading": "上传中", "queued": "等待识别", "processing": "识别中", "applied": "识别完成", "superseded": "识别完成", "failed": accepted ? "识别失败，请重拍" : "等待重试", "expired": "上传已过期", "cancelled": "已取消"][state] ?? state
+        return ["waiting": "等待上传", "uploading": "后台上传中", "queued": "已上传 · 服务器排队", "processing": "已上传 · 识别中", "applied": "识别完成", "superseded": "识别完成", "failed": accepted ? "识别失败，请重拍" : "等待重试", "expired": "上传已过期", "cancelled": "已取消"][state] ?? state
     }
 }
 

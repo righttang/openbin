@@ -22,7 +22,7 @@ struct ScanView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
+            LazyVStack(alignment: .leading, spacing: 24) {
                 ConnectionNote()
                 VStack(alignment: .leading, spacing: 12) {
                     Text("物品放在哪？").font(.subheadline).foregroundStyle(.secondary)
@@ -39,14 +39,14 @@ struct ScanView: View {
                         pickerPlace = store.selectedPlace; galleryPresented = true
                     } label: { Label(importing ? "正在保存照片…" : "从相册选择", systemImage: "photo.on.rectangle").frame(maxWidth: .infinity).padding(.vertical, 8) }
                         .disabled(store.selectedPlace == nil || importing).accessibilityIdentifier("scan.gallery")
-                    Text("拍完自动识别，继续拍下一张。没拍到的物品仍会保留。").font(.footnote).foregroundStyle(.secondary)
+                    Text("拍完立即上传，服务器排队识别。显示已上传后即可关闭 App。").font(.footnote).foregroundStyle(.secondary)
                 }
                 if let error = queue.storageError { Text(error).font(.footnote).foregroundStyle(.red) }
                 if queue.unsubmittedCount > 0 { Label("\(queue.unsubmittedCount) 张保存在手机，等待上传", systemImage: "iphone").font(.footnote).foregroundStyle(.secondary) }
                 VStack(alignment: .leading, spacing: 12) {
                     HStack { Text("最近拍摄").font(.headline); Spacer(); if store.loading { ProgressView() } }
                     if !visibleDrafts.isEmpty || !otherHistory.isEmpty {
-                        Text("点照片看结果；删除会移除整次扫描的照片及其独有物品。").font(.footnote).foregroundStyle(.secondary)
+                        Text("服务器排队的照片会继续识别；点照片看结果，点叉取消。").font(.footnote).foregroundStyle(.secondary)
                     }
                     if visibleDrafts.isEmpty && otherHistory.isEmpty {
                         ContentUnavailableView("给物品拍张照", systemImage: "camera.viewfinder", description: Text("以后想找时，输入名称就能知道放在哪。"))

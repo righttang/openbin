@@ -292,3 +292,80 @@ final class PlaceDescriptionTests: XCTestCase {
         XCTAssertEqual(result[1].notes, updated.notes)
     }
 }
+
+@MainActor final class FakeBackgroundUploads: PhotoUploadScheduling {
+    var requests: [String: URLRequest] = [:]
+    var receiptsToDeliver: [PhotoTransferReceipt] = []
+    var cancellationIDs: [String] = []
+    func schedule(_ request: URLRequest, file: URL, captureID: String) async throws {
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+        XCTAssertNil(request.httpBody, "The background task must stream its file instead of copying photo bytes")
+        requests[captureID + (request.httpMethod == "POST" ? "-cancel" : "")] = request
+    }
+    func cancel(_ captureID: String) async { cancellationIDs.append(captureID) }
+    func receipts(in folder: URL) -> [PhotoTransferReceipt] {
+        let values = receiptsToDeliver; receiptsToDeliver = []; return values
+    }
+}
+
+extension CaptureQueueTests {
+    func testEveryBurstPhotoIsHandedToSystemUploadsBeforeRecognitionCompletes() async throws {
+        let uploader = FakeBackgroundUploads(), api = APIClient(baseURL: URL(string: "http://127.0.0.1:1453")!)
+        let queue = CaptureQueue(api: api, folder: folder, backgroundUploader: uploader); defer { queue.stop() }
+        for _ in 0..<12 { try queue.enqueue(jpeg: image(), place: .init(id: "drawer", name: "抽屉")) }
+        queue.start()
+        try await waitUntil { uploader.requests.count == 12 }
+        XCTAssertTrue(queue.drafts.allSatisfy { $0.state == "uploading" && !$0.accepted })
+        queue.stop() // Going to the background stops polling, not file submission.
+        try queue.enqueue(jpeg: image(), place: .init(id: "drawer", name: "抽屉"))
+        try await waitUntil { uploader.requests.count == 13 }
+        let draft = queue.drafts[0]
+        let request = try XCTUnwrap(uploader.requests[draft.id])
+        XCTAssertTrue(request.url!.path.contains("/instant-photo/"))
+        XCTAssertEqual(request.value(forHTTPHeaderField: "X-Bin-ID"), draft.place.id)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "X-Photo-SHA256"), draft.photo.sha256)
+        let body = try JSONEncoder().encode(Capture(id: draft.id, state: "queued"))
+        uploader.receiptsToDeliver = [.init(captureID: draft.id, status: 200, body: body)]
+        NotificationCenter.default.post(name: .photoUploadFinished, object: nil)
+        try await waitUntil { queue.drafts.first(where: { $0.id == draft.id })!.accepted }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: queue.photoURL(draft.id).path))
+        XCTAssertEqual(queue.drafts.first(where: { $0.id == draft.id })!.label, "已上传 · 服务器排队")
+    }
+    func testBackgroundCancellationIsDurableUntilTheServerAcknowledgesIt() async throws {
+        let uploader = FakeBackgroundUploads(), api = APIClient(baseURL: URL(string: "http://127.0.0.1:1453")!)
+        let queue = CaptureQueue(api: api, folder: folder, backgroundUploader: uploader); defer { queue.stop() }
+        try queue.enqueue(jpeg: image(), place: .init(id: "drawer", name: "抽屉"))
+        let draft = queue.drafts[0]
+        queue.cancel(draft.id)
+        try await waitUntil { uploader.requests[draft.id + "-cancel"] != nil }
+        XCTAssertTrue(queue.drafts[0].cancelRequested)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: queue.photoURL(draft.id).path))
+        XCTAssertTrue(uploader.cancellationIDs.contains(draft.id))
+        uploader.receiptsToDeliver = [.init(captureID: draft.id, status: 200, body: try JSONEncoder().encode(Capture(id: draft.id, state: "cancelled")), cancellation: true)]
+        NotificationCenter.default.post(name: .photoUploadFinished, object: nil)
+        try await waitUntil { queue.drafts[0].state == "cancelled" }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: queue.photoURL(draft.id).path))
+    }
+    func testQueuedServerReceiptSurvivesAnAppRelaunch() async throws {
+        let api = APIClient(baseURL: URL(string: "http://127.0.0.1:1453")!), uploader = FakeBackgroundUploads()
+        let original = CaptureQueue(api: api, folder: folder)
+        try original.enqueue(jpeg: image(), place: .init(id: "drawer", name: "抽屉"))
+        let draft = original.drafts[0]
+        uploader.receiptsToDeliver = [.init(captureID: draft.id, status: 200, body: try JSONEncoder().encode(Capture(id: draft.id, state: "queued")))]
+        let restored = CaptureQueue(api: api, folder: folder, backgroundUploader: uploader)
+        XCTAssertTrue(restored.drafts[0].accepted)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: restored.photoURL(draft.id).path))
+    }
+    func testPreviewDecodingKeepsLargeSourceImagesSmall() throws {
+        let source = autoreleasepool { UIGraphicsImageRenderer(size: CGSize(width: 1200, height: 900), format: {
+            let format = UIGraphicsImageRendererFormat(); format.scale = 1; return format
+        }()).jpegData(withCompressionQuality: 0.8) { context in UIColor.blue.setFill(); context.fill(CGRect(x: 0, y: 0, width: 1200, height: 900)) } }
+        for _ in 0..<100 {
+            try autoreleasepool {
+                let thumbnail = try PhotoImages.decode(source, maxPixels: 240)
+                XCTAssertLessThanOrEqual(max(thumbnail.width, thumbnail.height), 240)
+                XCTAssertLessThan(thumbnail.bytesPerRow * thumbnail.height, 256 * 1024)
+            }
+        }
+    }
+}

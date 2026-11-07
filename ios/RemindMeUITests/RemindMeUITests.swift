@@ -27,6 +27,49 @@ final class RemindMeUITests: XCTestCase {
         }
         if let id = fixtureID { _ = try await fixtureAPI("/api/bins/\(id)", method: "DELETE") }
     }
+    @MainActor func testManyResultsAndRepeatedVoiceEditsStayResponsive() async throws {
+        guard let raw = ProcessInfo.processInfo.environment["REMINDME_MEMORY_FIXTURE"], let data = raw.data(using: .utf8) else { throw XCTSkip("Use the isolated memory stress runner") }
+        let fixture = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        let capture = try XCTUnwrap(fixture["newestCaptureID"] as? String)
+        let observation = try XCTUnwrap(fixture["targetObservationID"] as? String)
+        let app = XCUIApplication()
+        app.launchEnvironment["REMINDME_TEST_URL"] = "http://127.0.0.1:1456"
+        app.launchArguments += ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
+        app.launch()
+        let scan = app.buttons["scan.open.\(capture)"]
+        XCTAssertTrue(scan.waitForExistence(timeout: 20)); scan.tap()
+        let row = app.buttons["result.open.\(observation)"]
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        for index in 0..<8 {
+            app.buttons["result.voice.\(observation)"].tap()
+            let system = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+            if index == 0 && system.alerts.firstMatch.waitForExistence(timeout: 2) {
+                let deny = system.alerts.buttons.matching(NSPredicate(format: "label IN %@", ["不允许", "Don't Allow", "Don’t Allow"])).firstMatch
+                if deny.exists { deny.tap() }
+            }
+            let input = app.descendants(matching: .any).matching(identifier: "voice.transcript").firstMatch
+            XCTAssertTrue(input.waitForExistence(timeout: 10))
+            if input.frame.minY > app.frame.height * 0.6 { app.swipeUp() }
+            input.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5)).tap()
+            XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+            input.typeText("连续改名\(index)")
+            app.buttons["voice.submit"].tap()
+            XCTAssertTrue(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "连续改名\(index)"), object: row)], timeout: 15) == .completed)
+            XCTAssertTrue(app.navigationBars["识别结果"].exists)
+            app.swipeDown()
+        }
+        app.buttons["完成"].tap()
+        app.buttons["照片历史"].tap()
+        XCTAssertTrue(app.navigationBars["照片历史"].waitForExistence(timeout: 10))
+        let options = XCTMeasureOptions(); options.iterationCount = 1
+        measure(metrics: [XCTMemoryMetric(application: app)], options: options) {
+            for _ in 0..<14 { app.swipeUp(); XCTAssertTrue(app.navigationBars["照片历史"].exists) }
+            for _ in 0..<14 { app.swipeDown(); XCTAssertTrue(app.navigationBars["照片历史"].exists) }
+        }
+        XCTAssertEqual(app.state, .runningForeground)
+        let proof = XCTAttachment(screenshot: app.screenshot()); proof.name = "80张照片160件物品连续改名与滚动压力验证"; proof.lifetime = .keepAlways; add(proof)
+    }
+
     @MainActor func testVoiceSearchAndItemSupplement() async throws {
         guard ProcessInfo.processInfo.environment["REMINDME_RUN_UI_TESTS"] == "1" else { throw XCTSkip("Use ios/scripts/test-local.py with the local test server") }
         let profile = try await fixtureAPI("/api/auth/me")

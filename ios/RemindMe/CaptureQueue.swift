@@ -1,16 +1,32 @@
 import Foundation
 import CryptoKit
 import UIKit
+import ImageIO
+import UniformTypeIdentifiers
 
 enum PhotoProcessor {
     static func jpeg(_ data: Data, longestSide: CGFloat = 1600) throws -> Data {
-        guard let image = UIImage(data: data), image.size.width > 0, image.size.height > 0 else { throw APIError.message("这张照片无法读取，请重新拍摄。") }
-        let scale = min(1, longestSide / max(image.size.width, image.size.height))
-        let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
-        let format = UIGraphicsImageRendererFormat(); format.scale = 1; format.opaque = true
-        let resized = UIGraphicsImageRenderer(size: size, format: format).image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
-        guard let result = resized.jpegData(compressionQuality: 0.82), result.count <= 5 * 1024 * 1024 else { throw APIError.message("照片太大，请重新拍摄。") }
-        return result
+        try autoreleasepool {
+            let image = try PhotoImages.decode(data, maxPixels: Int(longestSide))
+            let output = NSMutableData()
+            guard let destination = CGImageDestinationCreateWithData(output, UTType.jpeg.identifier as CFString, 1, nil) else {
+                throw APIError.message("照片无法保存，请重新拍摄。")
+            }
+            CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.82] as CFDictionary)
+            guard CGImageDestinationFinalize(destination), output.length <= 5 * 1024 * 1024 else {
+                throw APIError.message("照片太大，请重新拍摄。")
+            }
+            return output as Data
+        }
+    }
+}
+
+/// Actor isolation keeps full photo preparation off the UI thread and serializes bursts.
+actor PhotoPreparation {
+    static let shared = PhotoPreparation()
+    func prepare(_ data: Data) throws -> (jpeg: Data, thumbnail: Data) {
+        let jpeg = try PhotoProcessor.jpeg(data)
+        return (jpeg, try PhotoProcessor.jpeg(jpeg, longestSide: 240))
     }
 }
 
@@ -21,6 +37,8 @@ enum PhotoProcessor {
     var onChange: (() -> Void)?
     let folder: URL
     private let api: any CaptureTransport
+    private let backgroundUploader: (any PhotoUploadScheduling)?
+    private var uploadObserver: NSObjectProtocol?
     private var workers: [String: Task<Void, Never>] = [:]
     private var cancellations: [String: Task<Void, Never>] = [:]
     private var retryAfter: [String: Date] = [:]
@@ -28,15 +46,20 @@ enum PhotoProcessor {
     private var monitor: Task<Void, Never>?
     private var enabled = false
 
-    init(api: any CaptureTransport, folder: URL) {
-        self.api = api; self.folder = folder
+    init(api: any CaptureTransport, folder: URL, backgroundUploader: (any PhotoUploadScheduling)? = nil) {
+        self.api = api; self.folder = folder; self.backgroundUploader = backgroundUploader
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             drafts = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
                 .filter { $0.pathExtension == "json" }.map { try JSONDecoder().decode(PhotoDraft.self, from: Data(contentsOf: $0)) }
                 .sorted { $0.capturedAt > $1.capturedAt }
         } catch { storageError = "待上传照片暂时无法读取：\(error.localizedDescription)" }
+        uploadObserver = NotificationCenter.default.addObserver(forName: .photoUploadFinished, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.consumeUploadReceipts(); self?.pump() }
+        }
+        consumeUploadReceipts()
     }
+    deinit { if let uploadObserver { NotificationCenter.default.removeObserver(uploadObserver) } }
     var pendingCount: Int { drafts.filter { $0.pending || ($0.cancelRequested && $0.state != "cancelled") }.count }
     var unsubmittedCount: Int { drafts.filter { !$0.accepted && $0.state != "cancelled" }.count }
     func photoURL(_ id: String) -> URL { folder.appendingPathComponent(id + ".jpg") }
@@ -47,7 +70,7 @@ enum PhotoProcessor {
         if let index = drafts.firstIndex(where: { $0.id == draft.id }) { drafts[index] = draft }
         else { drafts.insert(draft, at: 0) }
     }
-    func enqueue(jpeg: Data, place: Place, capturedAt: String? = nil) throws {
+    func enqueue(jpeg: Data, place: Place, capturedAt: String? = nil, thumbnail: Data? = nil) throws {
         if let storageError { throw APIError.message(storageError) }
         guard drafts.filter({ !$0.accepted && $0.state != "cancelled" }).count < 30 else { throw APIError.message("已有 30 张待上传照片，请联网后继续。") }
         let used = drafts.filter { !$0.accepted && $0.state != "cancelled" }.reduce(0) { $0 + $1.photo.size }
@@ -56,7 +79,7 @@ enum PhotoProcessor {
         let draft = PhotoDraft(id: id, photo: .init(id: UUID().uuidString.lowercased(), sha256: SHA256.hash(data: jpeg).map { String(format: "%02x", $0) }.joined(), size: jpeg.count, order: 0), place: place, capturedAt: capturedAt ?? captureTimestamp())
         try jpeg.write(to: photoURL(id), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
         do {
-            try PhotoProcessor.jpeg(jpeg, longestSide: 240).write(to: thumbnailURL(id), options: .atomic)
+            try (thumbnail ?? PhotoProcessor.jpeg(jpeg, longestSide: 240)).write(to: thumbnailURL(id), options: .atomic)
             try save(draft)
         } catch {
             try? FileManager.default.removeItem(at: photoURL(id)); try? FileManager.default.removeItem(at: thumbnailURL(id))
@@ -65,7 +88,7 @@ enum PhotoProcessor {
         pump()
     }
     func start() {
-        enabled = true; pump()
+        enabled = true; consumeUploadReceipts(); pump()
         guard monitor == nil else { return }
         monitor = Task { [weak self] in
             while !Task.isCancelled {
@@ -115,6 +138,14 @@ enum PhotoProcessor {
             guard let self else { return }
             defer { self.cancellations[draft.id] = nil }
             do {
+                if let backgroundUploader {
+                    await backgroundUploader.cancel(draft.id)
+                    guard let request = try await api.cancellationRequest(draft) else { throw APIError.message("取消配置不可用。") }
+                    let file = folder.appendingPathComponent(draft.id + ".cancel")
+                    try JSONSerialization.data(withJSONObject: ["bin_id": draft.place.id]).write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+                    try await backgroundUploader.schedule(request, file: file, captureID: draft.id)
+                    return
+                }
                 try await api.cancel(draft.id, placeID: draft.place.id)
                 guard var current = self.drafts.first(where: { $0.id == draft.id }) else { return }
                 current.state = "cancelled"; current.error = nil
@@ -126,15 +157,58 @@ enum PhotoProcessor {
         }
     }
     private func pump() {
-        guard enabled, storageError == nil else { return }
+        guard (enabled || backgroundUploader != nil), storageError == nil else { return }
         for draft in drafts.sorted(by: { $0.capturedAt < $1.capturedAt }) where (retryAfter[draft.id] ?? .distantPast) <= Date() {
             if draft.cancelRequested && draft.state != "cancelled" { launchCancellation(draft); continue }
-            guard workers.count < 2, workers[draft.id] == nil, !draft.accepted, !draft.cancelRequested, ["waiting", "uploading", "failed"].contains(draft.state) else { continue }
+            guard (backgroundUploader != nil || workers.count < 2), workers[draft.id] == nil, !draft.accepted, !draft.cancelRequested, ["waiting", "uploading", "failed"].contains(draft.state) else { continue }
             workers[draft.id] = Task { [weak self] in
                 guard let self else { return }
-                await transfer(draft)
-                workers[draft.id] = nil; pump()
+                if let backgroundUploader {
+                    await scheduleUpload(draft, using: backgroundUploader)
+                } else { await transfer(draft) }
+                workers[draft.id] = nil
+                if backgroundUploader == nil { pump() }
             }
+        }
+    }
+    private func scheduleUpload(_ draft: PhotoDraft, using uploader: any PhotoUploadScheduling) async {
+        do {
+            try checkActive(draft.id)
+            let request = try await api.instantPhotoRequest(draft)
+            try checkActive(draft.id)
+            guard let request else { throw APIError.message("上传配置不可用。") }
+            try await uploader.schedule(request, file: photoURL(draft.id), captureID: draft.id)
+            guard var current = drafts.first(where: { $0.id == draft.id }), !current.cancelRequested else {
+                await uploader.cancel(draft.id); return
+            }
+            if !current.accepted { current.state = "uploading"; current.error = nil; try save(current) }
+        } catch is CancellationError { }
+        catch { recordError(draft.id, message: "照片已保存在手机，联网后会重试上传。") }
+    }
+    private func consumeUploadReceipts() {
+        guard let backgroundUploader else { return }
+        for receipt in backgroundUploader.receipts(in: folder) {
+            guard var current = drafts.first(where: { $0.id == receipt.captureID }) else { continue }
+            do {
+                if receipt.cancellation {
+                    if (200..<300).contains(receipt.status) {
+                        try markCancelled(current.id)
+                        try? FileManager.default.removeItem(at: folder.appendingPathComponent(current.id + ".cancel"))
+                    } else { recordError(current.id, message: "取消已保存，联网后会重试。") }
+                    continue
+                }
+                if current.cancelRequested { continue }
+                if (200..<300).contains(receipt.status), let capture = try? JSONDecoder().decode(Capture.self, from: receipt.body), capture.accepted {
+                    current.state = capture.state; current.accepted = true; current.error = nil; try save(current)
+                    try? FileManager.default.removeItem(at: photoURL(current.id)); onChange?()
+                } else {
+                    let error = (try? JSONSerialization.jsonObject(with: receipt.body)) as? [String: Any]
+                    if error?["error"] as? String == "CAPTURE_CANCELLED" { try markCancelled(current.id) }
+                    else if error?["error"] as? String == "CAPTURE_EXPIRED" {
+                        current.state = "expired"; current.error = "上传已过期，原照片仍保留。点重试即可重新上传。"; try save(current)
+                    } else { recordError(current.id, message: "上传尚未确认，照片保存在手机，稍后会重试。") }
+                }
+            } catch { storageError = "照片状态无法保存，请释放手机空间后重试。" }
         }
     }
     private func checkActive(_ id: String) throws {
@@ -186,6 +260,7 @@ enum PhotoProcessor {
         retryAfter[id] = Date().addingTimeInterval(15)
     }
     private func poll() async {
+        consumeUploadReceipts()
         for draft in drafts where draft.accepted && !draft.cancelRequested && !["applied", "superseded", "failed", "cancelled"].contains(draft.state) {
             guard !Task.isCancelled else { return }
             do {

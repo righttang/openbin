@@ -95,7 +95,16 @@ try {
   await api(`/api/captures/${captureId}/photos/${photoId}/history`, 'DELETE');
   assert.equal((await api(`/api/captures/history?bin_id=${bin.id}`)).photos.length, 0);
   assert.equal((await fetch(`${base}/api/captures/${captureId}/photos/${photoId}/preview`)).status, 404);
-  console.log('Docker smoke passed: frontend, non-root/read-only runtime, LAN CSRF writes, image preview, restart persistence and history deletion.');
+  const instantId = crypto.randomUUID(), instantPhotoId = crypto.randomUUID();
+  const received = await api(`/api/captures/${instantId}/instant-photo/${instantPhotoId}`, 'PUT', png, {
+    'Content-Type': 'image/png', 'X-Photo-SHA256': crypto.createHash('sha256').update(png).digest('hex'),
+    'X-Photo-Size': String(png.length), 'X-Bin-ID': bin.id,
+  });
+  assert(['queued','processing','failed','applied'].includes(received.state), 'Native file upload must create its own server job');
+  assert((await api(`/api/captures/${instantId}`)).job, 'Server queue must be durable without a client completion request');
+  await api(`/api/captures/${instantId}/cancel`, 'POST', { bin_id: bin.id });
+  assert.equal((await api(`/api/captures/${instantId}`)).state, 'cancelled');
+  console.log('Docker smoke passed: frontend, LAN CSRF, photo preview, persistence, native upload handoff and server cancellation.');
 } finally {
   try { docker('rm', '-f', name); } catch { /* Container may not have started. */ }
   for (const volume of [dataVolume, scratchVolume]) {

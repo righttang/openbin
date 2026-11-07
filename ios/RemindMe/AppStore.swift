@@ -43,15 +43,18 @@ struct UndoRecord: Identifiable {
         selectedPlaceID = UserDefaults.standard.string(forKey: "place:\(url.absoluteString)") ?? ""
         scope = Self.folder(url.absoluteString)
         api = APIClient(baseURL: url)
-        queue = CaptureQueue(api: api, folder: scope.appendingPathComponent("uploads"))
+        queue = CaptureQueue(api: api, folder: scope.appendingPathComponent("uploads"), backgroundUploader: BackgroundPhotoUploader.shared)
         loadCache(); wireQueue()
     }
-    static func folder(_ server: String) -> URL {
+    nonisolated static func folder(_ server: String) -> URL {
         let hash = SHA256.hash(data: Data(server.utf8)).prefix(10).map { String(format: "%02x", $0) }.joined()
         return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("RemindMe/\(hash)")
     }
     private func wireQueue() {
-        queue.onChange = { [weak self] in Task { await self?.refresh() } }
+        queue.onChange = { [weak self] in
+            guard UIApplication.shared.applicationState == .active else { return }
+            Task { await self?.refresh() }
+        }
     }
     private func loadCache() {
         if let data = try? Data(contentsOf: scope.appendingPathComponent("library.json")), let cached = try? JSONDecoder().decode(LibraryCache.self, from: data) {
@@ -99,7 +102,7 @@ struct UndoRecord: Identifiable {
         if preparingPhotos > 0 || queue.pendingCount > 0 || queue.unsubmittedCount > 0 { throw APIError.message("请先上传或取消待处理照片，再切换服务器。") }
         guard !refreshing else { throw APIError.message("正在刷新，请稍后再试。") }
         queue.stop(); api = candidate; server = url.absoluteString; scope = Self.folder(server)
-        queue = CaptureQueue(api: candidate, folder: scope.appendingPathComponent("uploads")); wireQueue()
+        queue = CaptureQueue(api: candidate, folder: scope.appendingPathComponent("uploads"), backgroundUploader: BackgroundPhotoUploader.shared); wireQueue()
         places = []; items = []; history = []; undo = []; deletedItemIDs = []; removedPhotoIDs = []; removedObservationIDs = []
         selectedPlaceID = UserDefaults.standard.string(forKey: "place:\(server)") ?? ""
         UserDefaults.standard.set(server, forKey: "remindme-server")
@@ -113,10 +116,14 @@ struct UndoRecord: Identifiable {
         preparingPhotos += 1
         let targetQueue = queue
         let capturedAt = captureTimestamp()
-        defer { preparingPhotos -= 1 }
+        let backgroundTime = UIApplication.shared.beginBackgroundTask(withName: "Save captured photo")
+        defer {
+            preparingPhotos -= 1
+            if backgroundTime != .invalid { UIApplication.shared.endBackgroundTask(backgroundTime) }
+        }
         do {
-            let jpeg = try await Task.detached(priority: .userInitiated) { try PhotoProcessor.jpeg(data) }.value
-            try targetQueue.enqueue(jpeg: jpeg, place: place, capturedAt: capturedAt)
+            let photo = try await PhotoPreparation.shared.prepare(data)
+            try targetQueue.enqueue(jpeg: photo.jpeg, place: place, capturedAt: capturedAt, thumbnail: photo.thumbnail)
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
         } catch { self.error = error.localizedDescription }
     }

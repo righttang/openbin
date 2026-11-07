@@ -16,12 +16,14 @@
 		3CC394DD1F043421A2F65C6D /* SpeechInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55A7CD1BBC5AE4FD13557365 /* SpeechInput.swift */; };
 		3DAD88C5E4AE36661C65C337 /* RemindMeUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D7D0CAA26F57630CE44A505 /* RemindMeUITests.swift */; };
 		477B867F6DFA9DBBF7A774C5 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5F521DADE8CFF0CD5A2C2165 /* Foundation.framework */; };
+		521E4D0BE84F5C8DC5C8C6EE /* PhotoImages.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA55A7DD9AFCB7784B279AC9 /* PhotoImages.swift */; };
 		5F38A3D791B74F306BAADBCD /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5F521DADE8CFF0CD5A2C2165 /* Foundation.framework */; };
 		6229ACBEA77C11FA5D56EEAC /* FindView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D545E391F078B903DCE9EF5 /* FindView.swift */; };
 		66A2F5EAB00F7CAB694AB723 /* LibraryViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCE464BEE129370298AD0CD3 /* LibraryViews.swift */; };
 		9388B5D8B737531915E0C3EE /* CaptureQueueTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22DA3B565AE66160D86F14FC /* CaptureQueueTests.swift */; };
 		A4D44040B5758FB7022C7E9C /* RemindMeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA4DE1953A9CF3179B9039A7 /* RemindMeApp.swift */; };
 		D3BD15D648F02EB012151CFB /* CaptureQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F25844E694A05484FF47085 /* CaptureQueue.swift */; };
+		E05E763F5CAD9A826250F881 /* BackgroundPhotoUploader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C1A138750D0DDC6D0D096A7 /* BackgroundPhotoUploader.swift */; };
 		E475EA109A886B3239CE49D1 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5F521DADE8CFF0CD5A2C2165 /* Foundation.framework */; };
 		F6E9B11AB91655E207D9671A /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B49B82BA19E1E150047DCBC6 /* APIClient.swift */; };
 /* End PBXBuildFile section */
@@ -48,6 +50,7 @@
 		0854CEE894651864B3F5B740 /* APIIntegrationTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = APIIntegrationTests.swift; sourceTree = "<group>"; };
 		0F25844E694A05484FF47085 /* CaptureQueue.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptureQueue.swift; sourceTree = "<group>"; };
 		1C0769E7B1F0FC6EF228B401 /* RemindMe.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = RemindMe.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		1C1A138750D0DDC6D0D096A7 /* BackgroundPhotoUploader.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BackgroundPhotoUploader.swift; sourceTree = "<group>"; };
 		22DA3B565AE66160D86F14FC /* CaptureQueueTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptureQueueTests.swift; sourceTree = "<group>"; };
 		3C460864EBE64FC2D880042D /* RemindMeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RemindMeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		55A7CD1BBC5AE4FD13557365 /* SpeechInput.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SpeechInput.swift; sourceTree = "<group>"; };
@@ -62,6 +65,7 @@
 		CDA3D5ECE1E0DF0645334578 /* RemindMeUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RemindMeUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		DCE464BEE129370298AD0CD3 /* LibraryViews.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LibraryViews.swift; sourceTree = "<group>"; };
 		F8A05B68902B551275D34C5B /* Models.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		FA55A7DD9AFCB7784B279AC9 /* PhotoImages.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PhotoImages.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -116,6 +120,8 @@
 				80731EADF96283593652AFA3 /* ScanView.swift */,
 				05E75C70E07F7C80AD9BC53F /* Assets.xcassets */,
 				55A7CD1BBC5AE4FD13557365 /* SpeechInput.swift */,
+				FA55A7DD9AFCB7784B279AC9 /* PhotoImages.swift */,
+				1C1A138750D0DDC6D0D096A7 /* BackgroundPhotoUploader.swift */,
 			);
 			name = RemindMe;
 			path = RemindMe;
@@ -311,6 +317,8 @@
 				A4D44040B5758FB7022C7E9C /* RemindMeApp.swift in Sources */,
 				1D7B6E4BC78B0403DFC86E10 /* ScanView.swift in Sources */,
 				3CC394DD1F043421A2F65C6D /* SpeechInput.swift in Sources */,
+				521E4D0BE84F5C8DC5C8C6EE /* PhotoImages.swift in Sources */,
+				E05E763F5CAD9A826250F881 /* BackgroundPhotoUploader.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -400,12 +408,12 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 12;
+				CURRENT_PROJECT_VERSION = 13;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = RemindMe/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
-				MARKETING_VERSION = 1.0.11;
+				MARKETING_VERSION = 1.0.12;
 				PRODUCT_BUNDLE_IDENTIFIER = com.righttang.remindme;
 				SDKROOT = iphoneos;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -422,12 +430,12 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 12;
+				CURRENT_PROJECT_VERSION = 13;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = RemindMe/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
-				MARKETING_VERSION = 1.0.11;
+				MARKETING_VERSION = 1.0.12;
 				PRODUCT_BUNDLE_IDENTIFIER = com.righttang.remindme;
 				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
@@ -442,10 +450,10 @@
 			buildSettings = {
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 12;
+				CURRENT_PROJECT_VERSION = 13;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 1.0.11;
+				MARKETING_VERSION = 1.0.12;
 				PRODUCT_BUNDLE_IDENTIFIER = com.righttang.remindme.remindmeuitests;
 				SDKROOT = iphoneos;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -516,10 +524,10 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 12;
+				CURRENT_PROJECT_VERSION = 13;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 1.0.11;
+				MARKETING_VERSION = 1.0.12;
 				PRODUCT_BUNDLE_IDENTIFIER = com.righttang.remindme.remindmetests;
 				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
@@ -535,10 +543,10 @@
 			buildSettings = {
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 12;
+				CURRENT_PROJECT_VERSION = 13;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 1.0.11;
+				MARKETING_VERSION = 1.0.12;
 				PRODUCT_BUNDLE_IDENTIFIER = com.righttang.remindme.remindmeuitests;
 				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
@@ -555,10 +563,10 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 12;
+				CURRENT_PROJECT_VERSION = 13;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 1.0.11;
+				MARKETING_VERSION = 1.0.12;
 				PRODUCT_BUNDLE_IDENTIFIER = com.righttang.remindme.remindmetests;
 				SDKROOT = iphoneos;
 				SWIFT_EMIT_LOC_STRINGS = YES;

@@ -9,7 +9,7 @@ import SwiftUI
     @Published private(set) var finishing = false
     @Published private(set) var error: String?
     @Published private(set) var needsSettings = false
-    private let engine = AVAudioEngine()
+    private var engine: AVAudioEngine?
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var recognition: SFSpeechRecognitionTask?
     private var hasTap = false
@@ -49,6 +49,8 @@ import SwiftUI
             // Prefer local recognition where this language is available on the phone.
             request.requiresOnDeviceRecognition = recognizer.supportsOnDeviceRecognition
             self.request = request
+            let engine = AVAudioEngine()
+            self.engine = engine
             let input = engine.inputNode
             let format = input.outputFormat(forBus: 0)
             guard format.sampleRate > 0, format.channelCount > 0 else { throw APIError.message("麦克风暂不可用。") }
@@ -87,8 +89,8 @@ import SwiftUI
 
     func stopListening() {
         deadline?.cancel(); deadline = nil
-        if engine.isRunning { engine.stop() }
-        if hasTap { engine.inputNode.removeTap(onBus: 0); hasTap = false }
+        if let engine, engine.isRunning { engine.stop() }
+        if hasTap { engine?.inputNode.removeTap(onBus: 0); hasTap = false }
         request?.endAudio()
         listening = false
     }
@@ -117,10 +119,11 @@ import SwiftUI
     }
     private func releaseAudio() {
         deadline?.cancel(); deadline = nil
-        if engine.isRunning { engine.stop() }
-        if hasTap { engine.inputNode.removeTap(onBus: 0); hasTap = false }
+        if let engine, engine.isRunning { engine.stop() }
+        if hasTap { engine?.inputNode.removeTap(onBus: 0); hasTap = false }
         request?.endAudio(); request = nil
         recognition?.cancel(); recognition = nil
+        engine?.reset(); engine = nil
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
     func cancel() {

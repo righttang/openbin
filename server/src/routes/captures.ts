@@ -8,7 +8,7 @@ import { dismissObservation, dismissPhotoHistory, latestItemMedia, listPhotoHist
 import { refinePlace } from '../lib/captures/place-refine.js';
 import { refineItem } from '../lib/captures/refine.js';
 import { authorizeCapture, captureStatus, completeCapture, createCapture, receivePhoto } from '../lib/captures/store.js';
-import { NotFoundError, ValidationError } from '../lib/httpErrors.js';
+import { HttpError, NotFoundError, ValidationError } from '../lib/httpErrors.js';
 import { authenticate } from '../middleware/auth.js';
 
 const router = Router();
@@ -130,6 +130,15 @@ router.get('/', asyncHandler(async (req, res) => {
 router.post('/', asyncHandler(async (req, res) => {
   if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) throw new ValidationError('Capture details are required');
   res.status(201).json(await createCapture(req.body, req.user!.id));
+}));
+
+// A native background upload needs no later client request to start recognition.
+router.put('/:id/instant-photo/:photoId', asyncHandler(async (req, res) => {
+  const capture = await createCapture({ id: req.params.id, bin_id: req.header('X-Bin-ID'), source: 'web-instant',
+    device_id: 'ios', captured_at: req.header('X-Captured-At') }, req.user!.id);
+  if (capture.state === 'expired') throw new HttpError(410, 'CAPTURE_EXPIRED', 'Capture expired. Start a new capture.');
+  await receivePhoto(req, req.params.id, req.params.photoId, req.user!.id, true);
+  res.json(await captureStatus(req.params.id));
 }));
 
 router.get('/:id', asyncHandler(async (req, res) => {

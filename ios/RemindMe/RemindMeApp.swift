@@ -1,6 +1,7 @@
 import SwiftUI
 
 @main struct RemindMeApp: App {
+    @UIApplicationDelegateAdaptor(RemindMeAppDelegate.self) private var appDelegate
     @StateObject private var store = AppStore()
     @Environment(\.scenePhase) private var phase
     var body: some Scene {
@@ -9,7 +10,7 @@ import SwiftUI
                 .task { if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil { await store.activate() } }
                 .onChange(of: phase) { _, next in
                     if next == .active && ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil { Task { await store.activate() } }
-                    else if next == .background { store.queue.stop() }
+                    else if next == .background { store.queue.stop(); Task { await PhotoImageLoader.shared.clear() } }
                 }
         }
     }
@@ -69,9 +70,13 @@ struct UndoBanner: View {
 
 struct LocalThumbnail: View {
     let url: URL
+    @State private var image: UIImage?
     var body: some View {
-        if let image = UIImage(contentsOfFile: url.path) { Image(uiImage: image).resizable().scaledToFill() }
-        else { Rectangle().fill(.quaternary).overlay { Image(systemName: "photo").foregroundStyle(.secondary) } }
+        ZStack {
+            if let image { Image(uiImage: image).resizable().scaledToFill() }
+            else { Rectangle().fill(.quaternary).overlay { Image(systemName: "photo").foregroundStyle(.secondary) } }
+        }.task(id: url) { image = try? await PhotoImageLoader.shared.image(url, maxPixels: 240) }
+            .onDisappear { image = nil }
     }
 }
 struct CaptureThumbnail: View {
@@ -89,18 +94,23 @@ struct RemotePhoto: View {
     let path: String?
     var fallback: String? = nil
     var fit = false
-    @State private var useFallback = false
+    @State private var image: UIImage?
     var body: some View {
-        AsyncImage(url: store.imageURL(useFallback ? fallback : path)) { phase in
-            if let image = phase.image {
-                if fit { image.resizable().scaledToFit() } else { image.resizable().scaledToFill() }
-            } else {
-                Rectangle().fill(.quaternary).overlay { Image(systemName: phase.error == nil && path != nil ? "photo" : "photo.badge.exclamationmark").foregroundStyle(.secondary) }
-                    .onChange(of: phase.error != nil, initial: true) { _, failed in
-                        if failed && fallback != nil && !useFallback { useFallback = true }
-                    }
+        ZStack {
+            if let image {
+                if fit { Image(uiImage: image).resizable().scaledToFit() }
+                else { Image(uiImage: image).resizable().scaledToFill() }
+            } else { Rectangle().fill(.quaternary).overlay { Image(systemName: "photo").foregroundStyle(.secondary) } }
+        }.task(id: "\(store.server)|\(path ?? "")|\(fallback ?? "")|\(fit)") {
+            image = nil
+            for source in [path, fallback] {
+                guard let url = store.imageURL(source) else { continue }
+                do {
+                    let loaded = try await PhotoImageLoader.shared.image(url, maxPixels: fit ? 1200 : 240)
+                    try Task.checkCancellation(); image = loaded; break
+                } catch { if Task.isCancelled { return } }
             }
-        }.onChange(of: path) { _, _ in useFallback = false }
+        }.onDisappear { image = nil }
     }
 }
 

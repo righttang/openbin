@@ -107,7 +107,8 @@ struct CameraScreen: View {
                 if let error = store.error { Text(error).font(.footnote).padding().background(.black.opacity(0.8), in: RoundedRectangle(cornerRadius: 12)) }
                 Spacer()
                 CameraStrip(queue: queue, place: place)
-                Text(saving > 0 ? "正在保存照片…" : "按快门自动识别，继续拍下一张").font(.footnote).padding(8).background(.black.opacity(0.6), in: Capsule())
+                Text(saving > 0 ? "正在保存照片…" : queue.unsubmittedCount > 0 ? "\(queue.unsubmittedCount) 张正在上传，完成后可关闭 App" : "已上传的照片由服务器继续识别")
+                    .font(.footnote).padding(8).background(.black.opacity(0.6), in: Capsule())
                 Button { camera.shoot() } label: {
                     ZStack { Circle().stroke(.white, lineWidth: 4).frame(width: 82, height: 82); Circle().fill(.white.opacity(camera.ready ? 1 : 0.3)).frame(width: 68, height: 68); if camera.capturing { ProgressView().tint(.black) } }
                 }.disabled(!camera.ready || camera.capturing || saving >= 3).accessibilityLabel("拍摄照片").padding(.bottom, 16)
@@ -131,7 +132,7 @@ struct CameraStrip: View {
     @State private var removalTarget: String?
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 12) {
+            LazyHStack(spacing: 12) {
                 ForEach(queue.drafts.filter { $0.place.id == place.id && $0.state != "cancelled" }.prefix(8)) { draft in
                     VStack(spacing: 5) {
                         ZStack(alignment: .topTrailing) {
