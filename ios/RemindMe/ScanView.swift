@@ -6,6 +6,7 @@ struct ScanView: View {
     @ObservedObject var queue: CaptureQueue
     let managePlaces: () -> Void
     @State private var cameraPlace: Place?
+    @State private var placeVoiceID: String?
     @State private var selectedPhoto: HistoryPhoto?
     @State private var pickerItems: [PhotosPickerItem] = []
     @State private var pickerPlace: Place?
@@ -25,14 +26,11 @@ struct ScanView: View {
                 ConnectionNote()
                 VStack(alignment: .leading, spacing: 12) {
                     Text("物品放在哪？").font(.subheadline).foregroundStyle(.secondary)
-                    Menu {
-                        ForEach(store.places) { place in Button { store.selectedPlaceID = place.id } label: { if store.selectedPlaceID == place.id { Label(place.name, systemImage: "checkmark") } else { Text(place.name) } } }
-                        Divider()
-                        Button("添加或管理地点", systemImage: "plus") { managePlaces() }
-                    } label: {
-                        HStack { Image(systemName: "mappin.and.ellipse"); Text(store.selectedPlace?.name ?? "添加第一个地点").fontWeight(.semibold); Spacer(); Image(systemName: "chevron.down").font(.caption) }
-                            .padding().background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
-                    }.accessibilityIdentifier("scan.place")
+                    if let place = store.selectedPlace {
+                        PlaceDescriptionView(place: place, activeVoiceID: $placeVoiceID, prefix: "scan.place", managePlaces: managePlaces)
+                    } else {
+                        Button("添加第一个地点", action: managePlaces).accessibilityIdentifier("scan.place")
+                    }
                     Button {
                         if let place = store.selectedPlace { cameraPlace = place } else { managePlaces() }
                     } label: { Label(store.places.isEmpty ? "添加地点，开始拍照" : "拍照", systemImage: "camera.fill").font(.title3.weight(.semibold)).frame(maxWidth: .infinity).padding(.vertical, 16) }
@@ -61,7 +59,7 @@ struct ScanView: View {
                                 HStack(spacing: 12) {
                                     CaptureThumbnail(draft: draft, queue: queue).frame(width: 64, height: 64).clipShape(RoundedRectangle(cornerRadius: 12))
                                     VStack(alignment: .leading, spacing: 5) {
-                                        Text(draft.place.name).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
+                                        Text(store.places.first { $0.id == draft.place.id }?.name ?? draft.place.name).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
                                         Text(draft.label).font(.caption).foregroundStyle(draft.state == "applied" ? .green : .secondary)
                                         if let photo = store.history.first(where: { $0.capture_id == draft.id }), photo.state == "applied" { Text("\(photo.items.count) 类物品 · 点开查看").font(.caption).foregroundStyle(.secondary) }
                                     }

@@ -25,7 +25,7 @@ jobs:
           REMINDME_SIM_ID=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; print(next(d["udid"] for group in json.load(sys.stdin)["devices"].values() for d in group if d["name"].startswith("iPhone")))')
           echo "IOS_TEST_DESTINATION=platform=iOS Simulator,id=$REMINDME_SIM_ID" >> "$GITHUB_ENV"
       - name: Build native app and verify durable photo queue
-        run: xcodebuild test -project ios/RemindMe.xcodeproj -scheme RemindMe -destination "$IOS_TEST_DESTINATION" -only-testing:RemindMeTests/CaptureQueueTests -only-testing:RemindMeTests/ItemOrderTests -parallel-testing-enabled NO
+        run: xcodebuild test -project ios/RemindMe.xcodeproj -scheme RemindMe -destination "$IOS_TEST_DESTINATION" -only-testing:RemindMeTests/CaptureQueueTests -only-testing:RemindMeTests/ItemOrderTests -only-testing:RemindMeTests/PlaceDescriptionTests -parallel-testing-enabled NO
 
   verify:
     runs-on: ubuntu-latest

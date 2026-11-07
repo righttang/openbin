@@ -87,6 +87,20 @@ async function inventory() {
 }
 
 describe('PostgreSQL capture pipeline', () => {
+  it('updates spoken place notes without moving its inventory or reordering history', async () => {
+    const batch = await queued();
+    await processNextCapture({ recognize: async () => recognized(batch.photoId, null, 2) });
+    const before = await inventory();
+    const expected = { name: 'Desk', notes: '车库右侧架子第二层。' };
+    vi.stubEnv('AI_ENDPOINT_URL', 'https://gateway.test/v1'); vi.stubEnv('AI_MODEL', 'vision'); vi.stubEnv('AI_API_KEY', 'test');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(expected) } }] }))));
+    try {
+      const response = await request(app).post(`/api/captures/places/${binId}/refine`).set('Authorization', `Bearer ${token}`).send({ instruction: '说明改成车库右侧架子第二层' });
+      expect(response.status).toBe(200); expect(response.body).toEqual({ id: binId, ...expected });
+      expect((await query('SELECT name,notes FROM bins WHERE id=$1', [binId])).rows[0]).toEqual(expected);
+      expect(await inventory()).toEqual(before);
+    } finally { vi.unstubAllGlobals(); vi.unstubAllEnvs(); }
+  });
   it('refines an item from its stored crop, updates history and preserves quantity and location', async () => {
     const batch = await queued();
     await processNextCapture({ recognize: async () => recognized(batch.photoId, null, 2) });

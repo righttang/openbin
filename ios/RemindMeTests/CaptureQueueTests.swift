@@ -276,3 +276,19 @@ final class ItemOrderTests: XCTestCase {
         XCTAssertEqual(StableItemOrder.merge(previous: [], incoming: incoming, edited: [:]).map(\.id), incoming.map(\.id))
     }
 }
+
+
+final class PlaceDescriptionTests: XCTestCase {
+    func testOldCachedPlacesDecodeWithoutNotes() throws {
+        let place = try JSONDecoder().decode(Place.self, from: Data(#"{"id":"desk","name":"书桌"}"#.utf8))
+        XCTAssertNil(place.notes)
+    }
+    func testEditingPlaceDescriptionKeepsItsPositionAndSelectionIdentity() {
+        let old = [Place(id: "a", name: "书架"), Place(id: "b", name: "架子"), Place(id: "c", name: "抽屉")]
+        let updated = Place(id: "b", name: "车库架子", notes: "右侧第二层，靠门一侧。")
+        let result = StablePlaceOrder.merge(previous: old, incoming: [old[2], updated, old[0]])
+        XCTAssertEqual(result.map(\.id), ["a", "b", "c"])
+        XCTAssertEqual(result[1].name, updated.name)
+        XCTAssertEqual(result[1].notes, updated.notes)
+    }
+}

@@ -75,7 +75,7 @@ struct UndoRecord: Identifiable {
             async let newItems = api.inventory()
             async let newHistory = api.history()
             let values = try await (newPlaces, newItems, newHistory)
-            places = values.0
+            places = StablePlaceOrder.merge(previous: places, incoming: values.0)
             items = values.1.filter { !deletedItemIDs.contains($0.id) }
             history = values.2.filter { !removedPhotoIDs.contains($0.id) }.map { photo in
                 var result = photo
@@ -166,6 +166,14 @@ struct UndoRecord: Identifiable {
         let data = try await api.mutate("/api/bins", body: ["name": name.trimmingCharacters(in: .whitespacesAndNewlines), "locationId": locationID])
         let place = try JSONDecoder().decode(Place.self, from: data)
         places.append(place); selectedPlaceID = place.id; await refresh()
+    }
+    func refinePlace(_ place: Place, instruction: String) async throws {
+        let updated = try await api.refinePlace(place.id, instruction: instruction)
+        if let index = places.firstIndex(where: { $0.id == updated.id }) { places[index] = updated }
+        for index in items.indices where items[index].bin_id == updated.id { items[index].bin_name = updated.name }
+        for index in history.indices where history[index].bin_id == updated.id { history[index].bin_name = updated.name }
+        revision += 1; saveCache()
+        await refresh()
     }
     func rename(_ place: Place, to name: String) async throws {
         try await api.mutate("/api/bins/\(place.id)", method: "PUT", body: ["name": name]); await refresh()

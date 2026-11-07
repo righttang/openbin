@@ -5,6 +5,7 @@ struct ServerStatus: Decodable { let localMode: Bool }
 struct Place: Codable, Identifiable, Hashable {
     let id: String
     var name: String
+    var notes: String? = nil
 }
 struct PlaceList: Decodable { let results: [Place]; let count: Int }
 struct Inventory: Decodable { let items: [InventoryItem] }
@@ -15,7 +16,7 @@ struct InventoryItem: Codable, Identifiable, Hashable {
     let aliases: [String]
     let quantity: Int?
     let bin_id: String
-    let bin_name: String
+    var bin_name: String
     let last_seen_at: String?
     let crop_url: String?
     let photo_preview_url: String?
@@ -26,7 +27,7 @@ struct HistoryPhoto: Codable, Identifiable, Hashable {
     let capture_id: String
     let photo_id: String
     let bin_id: String
-    let bin_name: String
+    var bin_name: String
     let captured_at: String
     let state: String
     let preview_url: String?
@@ -120,5 +121,14 @@ enum StableItemOrder {
         let retained = previous.compactMap { latest[$0.id] }
         let retainedIDs = Set(retained.map(\.id))
         return retained + incoming.filter { !retainedIDs.contains($0.id) }.map { edited[$0.id] ?? $0 }
+    }
+}
+
+enum StablePlaceOrder {
+    static func merge(previous: [Place], incoming: [Place]) -> [Place] {
+        let latest = Dictionary(uniqueKeysWithValues: incoming.map { ($0.id, $0) })
+        let retained = previous.compactMap { latest[$0.id] }
+        let retainedIDs = Set(retained.map(\.id))
+        return retained + incoming.filter { !retainedIDs.contains($0.id) }
     }
 }

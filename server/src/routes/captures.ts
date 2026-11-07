@@ -5,6 +5,7 @@ import { verifyBinAccess } from '../lib/binAccess.js';
 import { cancelCapture } from '../lib/captures/cancel.js';
 import { captureConfig, supportedMimeTypes } from '../lib/captures/config.js';
 import { dismissObservation, dismissPhotoHistory, latestItemMedia, listPhotoHistory } from '../lib/captures/history.js';
+import { refinePlace } from '../lib/captures/place-refine.js';
 import { refineItem } from '../lib/captures/refine.js';
 import { authorizeCapture, captureStatus, completeCapture, createCapture, receivePhoto } from '../lib/captures/store.js';
 import { NotFoundError, ValidationError } from '../lib/httpErrors.js';
@@ -69,6 +70,10 @@ router.get('/history', asyncHandler(async (req, res) => {
   const binId = typeof req.query.bin_id === 'string' ? req.query.bin_id : null;
   const locationId = typeof req.query.location_id === 'string' ? req.query.location_id : null;
   res.json({ photos: await listPhotoHistory(req.user!.id, binId, locationId) });
+}));
+
+router.post('/places/:placeId/refine', asyncHandler(async (req, res) => {
+  res.json(await refinePlace(req.params.placeId, req.body?.instruction, req.user!.id));
 }));
 
 router.post('/items/:itemId/refine', asyncHandler(async (req, res) => {

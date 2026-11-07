@@ -89,6 +89,11 @@ actor APIClient: CaptureTransport {
         let result: Inventory = try await get("/api/captures/inventory?\(parts.percentEncodedQuery ?? "")")
         return result.items
     }
+    func refinePlace(_ id: String, instruction: String) async throws -> Place {
+        let data = try await raw("/api/captures/places/\(id)/refine", method: "POST", body: JSONSerialization.data(withJSONObject: ["instruction": instruction]),
+                                 headers: ["Content-Type": "application/json"], timeout: 150)
+        return try JSONDecoder().decode(Place.self, from: data)
+    }
     func refine(itemID: String, observationID: String?, instruction: String) async throws -> ItemRefinement {
         let path = observationID.map { "/api/captures/observations/\($0)/refine" } ?? "/api/captures/items/\(itemID)/refine"
         let data = try await raw(path, method: "POST", body: JSONSerialization.data(withJSONObject: ["instruction": instruction]),

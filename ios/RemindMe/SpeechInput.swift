@@ -132,6 +132,7 @@ import SwiftUI
 struct InlineVoiceInput: View {
     let hint: String
     let actionTitle: String
+    var title = "补充说明"
     let onCancel: () -> Void
     let onSubmit: (String) -> Void
     @Environment(\.scenePhase) private var scenePhase
@@ -142,7 +143,7 @@ struct InlineVoiceInput: View {
                 if speech.preparing { ProgressView().controlSize(.small) }
                 Image(systemName: speech.listening ? "waveform" : "mic")
                     .foregroundStyle(speech.listening ? .red : .secondary)
-                Text(speech.preparing ? "正在准备…" : speech.listening ? "正在听…" : "补充说明")
+                Text(speech.preparing ? "正在准备…" : speech.listening ? "正在听…" : title)
                     .font(.subheadline.weight(.medium))
                 Spacer()
                 Button { speech.cancel(); onCancel() } label: {

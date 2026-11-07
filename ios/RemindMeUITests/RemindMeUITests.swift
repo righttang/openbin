@@ -150,6 +150,27 @@ final class RemindMeUITests: XCTestCase {
         XCTAssertTrue(scan.waitForExistence(timeout: 20)); scan.tap()
         let wrong = app.buttons["result.delete.\(wrongID)"]
         XCTAssertTrue(wrong.waitForExistence(timeout: 10))
+        let placeID = try XCTUnwrap(fixture["placeID"])
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "result.open."))
+        let beforeOrder = rows.allElementsBoundByIndex.map(\.identifier)
+        app.buttons["result.place.voice.\(placeID)"].tap()
+        let speechSystem = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        if speechSystem.alerts.firstMatch.waitForExistence(timeout: 4) {
+            let deny = speechSystem.alerts.buttons.matching(NSPredicate(format: "label IN %@", ["不允许", "Don't Allow", "Don’t Allow"])).firstMatch
+            if deny.exists { deny.tap() }
+        }
+        let placeTranscript = app.descendants(matching: .any).matching(identifier: "voice.transcript").firstMatch
+        XCTAssertTrue(placeTranscript.waitForExistence(timeout: 10)); placeTranscript.tap()
+        placeTranscript.typeText("位置名称保持不变，说明改成车库右侧架子第二层，靠门一侧。")
+        app.buttons["voice.submit"].tap()
+        let notes = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "第二层")).firstMatch
+        XCTAssertTrue(notes.waitForExistence(timeout: 90))
+        XCTAssertTrue(app.navigationBars["识别结果"].exists)
+        XCTAssertEqual(rows.allElementsBoundByIndex.map(\.identifier), beforeOrder)
+        let updatedPlace = try await fixtureAPI("/api/bins/\(placeID)")
+        XCTAssertEqual(updatedPlace["name"] as? String, "识别结果删除验收")
+        XCTAssertTrue((updatedPlace["notes"] as? String ?? "").contains("靠门"))
+        let location = XCTAttachment(screenshot: app.screenshot()); location.name = "照片地点原地语音更新位置说明"; location.lifetime = .keepAlways; add(location)
         XCTAssertFalse(app.buttons["result.open.\(wrongID)"].label.contains("识别结果删除验收"))
         XCTAssertFalse(app.buttons["result.open.\(wrongID)"].label.contains("月"))
         XCTAssertGreaterThanOrEqual(app.buttons["result.voice.\(wrongID)"].frame.width, 56)

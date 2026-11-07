@@ -9,6 +9,7 @@ struct PlacesView: View {
     @State private var deleting: Place?
     @State private var busy = false
     @State private var error: String?
+    @State private var activeVoiceID: String?
     var body: some View {
         List {
             Section {
@@ -28,9 +29,7 @@ struct PlacesView: View {
             Section("已有地点") {
                 ForEach(store.places) { place in
                     HStack {
-                        Button { store.selectedPlaceID = place.id; scan() } label: {
-                            HStack { Label(place.name, systemImage: "mappin.and.ellipse"); Spacer(); Image(systemName: "camera").foregroundStyle(.secondary) }
-                        }.buttonStyle(.plain)
+                        PlaceDescriptionView(place: place, activeVoiceID: $activeVoiceID, prefix: "places", onSelect: { store.selectedPlaceID = place.id; scan() })
                         Menu {
                             Button("改名", systemImage: "pencil") { editing = place; editName = place.name }
                             Button("删除地点", systemImage: "trash", role: .destructive) { deleting = place }
@@ -112,7 +111,7 @@ struct PhotoDetailView: View {
             ForEach(photos) { entry in
                 RemotePhoto(path: entry.preview_url, fit: true).frame(maxWidth: .infinity).frame(height: 230).listRowInsets(EdgeInsets()).listRowSeparator(.hidden)
                 Section {
-                    Label(entry.bin_name, systemImage: "mappin.and.ellipse")
+                    PlaceDescriptionView(place: Place(id: entry.bin_id, name: entry.bin_name), activeVoiceID: $activeVoiceID, prefix: "result.place")
                     Text("\(photoDate(entry.captured_at)) · \(stateLabel(entry.state))").font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("识别出 \(entry.items.count) 类物品") {
@@ -181,5 +180,64 @@ struct ConnectionView: View {
             } header: { Text("服务器地址") } footer: { Text("手机需连接家庭 Wi-Fi。首次使用时，请允许系统的“本地网络”和“相机”权限。离线照片会留在手机，重新打开应用后继续上传。") }
             if let result { Section { Text(result).font(.subheadline) } }
         }.navigationTitle("服务器连接").onAppear { address = store.server }
+    }
+}
+
+struct PlaceDescriptionView: View {
+    @EnvironmentObject var store: AppStore
+    let place: Place
+    @Binding var activeVoiceID: String?
+    var prefix = "place"
+    var onSelect: (() -> Void)? = nil
+    var managePlaces: (() -> Void)? = nil
+    @State private var saving = false
+    @State private var error: String?
+    private var current: Place { store.places.first { $0.id == place.id } ?? place }
+    private var voiceID: String { "place-\(place.id)" }
+    private var label: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Label(current.name, systemImage: "mappin.and.ellipse").font(.body.weight(.medium)).foregroundStyle(.primary)
+            if let notes = current.notes, !notes.isEmpty { Text(notes).font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                if let managePlaces {
+                    Menu {
+                        ForEach(store.places) { place in
+                            Button { store.selectedPlaceID = place.id } label: {
+                                if store.selectedPlaceID == place.id { Label(place.name, systemImage: "checkmark") } else { Text(place.name) }
+                            }
+                        }
+                        Divider()
+                        Button("添加或管理地点", systemImage: "plus", action: managePlaces)
+                    } label: {
+                        HStack { label; Image(systemName: "chevron.down").font(.caption) }.padding(12)
+                            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
+                    }.accessibilityIdentifier("scan.place")
+                } else if let onSelect {
+                    Button(action: onSelect) { label }.buttonStyle(.plain).accessibilityIdentifier("\(prefix).select.\(place.id)")
+                } else { label }
+                Button { error = nil; activeVoiceID = activeVoiceID == voiceID ? nil : voiceID } label: {
+                    Group {
+                        if saving { ProgressView() }
+                        else { Image(systemName: activeVoiceID == voiceID ? "waveform" : "mic.fill").font(.system(size: 23, weight: .semibold)) }
+                    }.frame(width: 56, height: 56).background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 16))
+                }.buttonStyle(.borderless).disabled(saving)
+                    .accessibilityLabel("语音修改位置说明").accessibilityIdentifier("\(prefix).voice.\(place.id)")
+            }
+            if activeVoiceID == voiceID {
+                InlineVoiceInput(hint: "例如：在车库右侧架子的第二层", actionTitle: "更新位置", title: "位置说明", onCancel: { activeVoiceID = nil }) { text in
+                    activeVoiceID = nil; saving = true; error = nil
+                    Task {
+                        defer { saving = false }
+                        do { try await store.refinePlace(current, instruction: text) }
+                        catch { self.error = error.localizedDescription }
+                    }
+                }
+            }
+            if let error { Text(error).font(.caption).foregroundStyle(.red) }
+        }
     }
 }

@@ -129,3 +129,60 @@ describe('spoken item correction', () => {
     expect((await send()).status).toBe(404); expect(fetcher).not.toHaveBeenCalled();
   });
 });
+
+
+describe('spoken place description', () => {
+  const correction = { name: 'Desk', notes: '车库右侧架子的第二层，靠门一侧。' };
+  const placePath = () => `/api/captures/places/${binId}/refine`;
+  it('combines the previous description with speech and updates only the same place', async () => {
+    getDb().prepare("UPDATE bins SET notes='原来在右侧架子' WHERE id=?").run(binId);
+    const beforeItem = item();
+    const beforeObservation = getDb().prepare('SELECT * FROM observations WHERE id=?').get(observationId);
+    const fetcher = vi.fn().mockResolvedValue(envelope(correction)); vi.stubGlobal('fetch', fetcher);
+    const response = await send('位置说明改成车库右侧架子的第二层，靠门一侧', placePath());
+    expect(response.status).toBe(200); expect(response.body).toEqual({ id: binId, ...correction });
+    const input = JSON.parse(JSON.parse(fetcher.mock.calls[0][1].body).messages[1].content[0].text);
+    expect(input.current_place).toEqual({ name: 'Desk', notes: '原来在右侧架子' });
+    expect(input.user_instruction).toContain('第二层'); expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(getDb().prepare('SELECT id,name,notes FROM bins WHERE id=?').get(binId)).toEqual({ id: binId, ...correction });
+    expect(item()).toEqual(beforeItem);
+    expect(getDb().prepare('SELECT * FROM observations WHERE id=?').get(observationId)).toEqual(beforeObservation);
+  });
+  it('syncs a requested name change into search and photo history while keeping the place identity', async () => {
+    const renamed = { ...correction, name: '车库架子' };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(envelope(renamed)));
+    expect((await send('名字改成车库架子', placePath())).status).toBe(200);
+    const history = await request(app).get('/api/captures/history').set('Authorization', `Bearer ${token}`);
+    expect(history.body.photos[0]).toMatchObject({ bin_id: binId, bin_name: renamed.name });
+    const inventory = await request(app).get('/api/captures/inventory').query({ q: renamed.name }).set('Authorization', `Bearer ${token}`);
+    expect(inventory.body.items[0]).toMatchObject({ id: itemId, bin_id: binId, bin_name: renamed.name });
+  });
+  it.each(['', 'x'.repeat(2001), null])('rejects empty or excessive speech without sending a model request', async instruction => {
+    const fetcher = vi.fn(); vi.stubGlobal('fetch', fetcher);
+    expect((await send(instruction, placePath())).status).toBe(422); expect(fetcher).not.toHaveBeenCalled();
+  });
+  it('keeps the original place when the model returns an invalid result', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(envelope({ ...correction, name: '' })));
+    expect((await send('改一下位置说明', placePath())).status).toBe(502);
+    expect(getDb().prepare('SELECT name,notes FROM bins WHERE id=?').get(binId)).toEqual({ name: 'Desk', notes: '' });
+  });
+  it('does not restore a place deleted during inference', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => {
+      getDb().prepare("UPDATE bins SET deleted_at='2026-11-07T00:00:00Z' WHERE id=?").run(binId); return envelope(correction);
+    }));
+    expect((await send('改一下位置说明', placePath())).status).toBe(404);
+    expect(getDb().prepare('SELECT notes FROM bins WHERE id=?').get(binId)).toEqual({ notes: '' });
+  });
+  it('keeps a newer description entered during inference', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => {
+      getDb().prepare('UPDATE bins SET notes=? WHERE id=?').run('Newer location', binId); return envelope(correction);
+    }));
+    expect((await send('改一下位置说明', placePath())).status).toBe(409);
+    expect(getDb().prepare('SELECT notes FROM bins WHERE id=?').get(binId)).toEqual({ notes: 'Newer location' });
+  });
+  it('does not send a viewer’s place details to the model for editing', async () => {
+    getDb().prepare("UPDATE location_members SET role='viewer' WHERE user_id=?").run(userId);
+    const fetcher = vi.fn(); vi.stubGlobal('fetch', fetcher);
+    expect((await send('改一下位置说明', placePath())).status).toBe(403); expect(fetcher).not.toHaveBeenCalled();
+  });
+});

@@ -73,6 +73,7 @@ struct FindView: View {
 }
 
 struct ItemRow: View {
+    @EnvironmentObject var store: AppStore
     let item: InventoryItem
     var showContext = true
     var body: some View {
@@ -81,7 +82,7 @@ struct ItemRow: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(item.name).font(.body.weight(.medium))
                 if showContext {
-                    Label(item.bin_name, systemImage: "mappin.and.ellipse").font(.subheadline).foregroundStyle(.secondary)
+                    Label(store.places.first { $0.id == item.bin_id }?.name ?? item.bin_name, systemImage: "mappin.and.ellipse").font(.subheadline).foregroundStyle(.secondary)
                     Text(photoDate(item.last_seen_at)).font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -166,6 +167,7 @@ struct ItemDetailView: View {
     @State private var refinementError: String?
     @State private var correctedItem: InventoryItem?
     @State private var didRefine = false
+    @State private var placeVoiceID: String?
     private var current: InventoryItem {
         if let correctedItem { return correctedItem }
         if let observationID, let record = store.history.flatMap(\.items).first(where: { $0.id == observationID }) {
@@ -197,7 +199,7 @@ struct ItemDetailView: View {
                 if let refinementError { Text(refinementError).font(.footnote).foregroundStyle(.red) }
                 if didRefine && !refining { Label("名称和说明已更新", systemImage: "checkmark.circle").font(.footnote).foregroundStyle(.green) }
                 Text(current.crop_url == nil ? "原照片预览" : "物品裁剪照片").font(.caption).foregroundStyle(.secondary)
-                Label(current.bin_name, systemImage: "mappin.and.ellipse").font(.title3.weight(.semibold))
+                PlaceDescriptionView(place: Place(id: current.bin_id, name: current.bin_name), activeVoiceID: $placeVoiceID, prefix: "item.place")
                 Text("最后看到：\(photoDate(current.last_seen_at))").font(.subheadline).foregroundStyle(.secondary)
                 if !current.description.isEmpty { Text(current.description).lineSpacing(5) }
                 if !current.aliases.isEmpty { Text(current.aliases.joined(separator: " · ")).font(.footnote).foregroundStyle(.secondary) }
