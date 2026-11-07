@@ -82,13 +82,37 @@ final class RemindMeUITests: XCTestCase {
         let after = XCTAttachment(screenshot: app.screenshot()); after.name = "语音更新后留在查找页"; after.lifetime = .keepAlways; add(after)
         result.tap()
         XCTAssertTrue(app.navigationBars["小米室外摄像头"].waitForExistence(timeout: 10))
-        app.buttons["item.voice"].tap()
+    }
+
+    @MainActor func testSwitchBetweenItemAndPlaceVoiceInputs() async throws {
+        guard ProcessInfo.processInfo.environment["REMINDME_RUN_UI_TESTS"] == "1" else { throw XCTSkip("Use the local test server") }
+        let profile = try await fixtureAPI("/api/auth/me")
+        guard profile["id"] as? String == ProcessInfo.processInfo.environment["REMINDME_EXPECT_TEST_PROFILE"] else { XCTFail("Wrong test profile"); return }
+        let name = "语音切换验收" + UUID().uuidString.prefix(6)
+        let fixture = try await fixtureAPI("/api/bins", method: "POST", body: ["name": "位置说明验收", "locationId": profile["activeLocationId"]!, "items": [name]])
+        fixtureID = try XCTUnwrap(fixture["id"] as? String)
+        let app = XCUIApplication()
+        app.launchEnvironment["REMINDME_TEST_URL"] = "http://127.0.0.1:1453"
+        app.launchArguments += ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
+        app.launch()
+        XCTAssertTrue(app.tabBars.buttons["查找"].waitForExistence(timeout: 20)); app.tabBars.buttons["查找"].tap()
+        XCTAssertTrue(app.searchFields.firstMatch.waitForExistence(timeout: 10))
+        app.searchFields.firstMatch.tap(); app.searchFields.firstMatch.typeText(name)
+        let result = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", name)).firstMatch
+        XCTAssertTrue(result.waitForExistence(timeout: 15)); result.tap()
+        XCTAssertTrue(app.buttons["item.voice"].waitForExistence(timeout: 10)); app.buttons["item.voice"].tap()
+        let system = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        if system.alerts.firstMatch.waitForExistence(timeout: 3) {
+            let deny = system.alerts.buttons.matching(NSPredicate(format: "label IN %@", ["不允许", "Don't Allow", "Don’t Allow"])).firstMatch
+            if deny.exists { deny.tap() }
+        }
+        let transcript = app.descendants(matching: .any).matching(identifier: "voice.transcript").firstMatch
         XCTAssertTrue(transcript.waitForExistence(timeout: 10))
         app.buttons["item.place.voice.\(fixtureID!)"].tap()
         XCTAssertTrue(app.staticTexts["位置说明"].waitForExistence(timeout: 10))
         XCTAssertEqual(app.buttons.matching(identifier: "voice.cancel").count, 1)
-        app.buttons["voice.cancel"].tap()
-        XCTAssertFalse(transcript.exists)
+        app.buttons["voice.cancel"].tap(); XCTAssertFalse(transcript.exists)
+        XCTAssertTrue(app.navigationBars[name].exists)
     }
 
     @MainActor func testDeleteWholeScanDirectlyFromScanPage() async throws {
