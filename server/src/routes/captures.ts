@@ -44,7 +44,7 @@ router.get('/inventory', asyncHandler(async (req, res) => {
       AND (CAST($3 AS TEXT) IS NULL OR b.id = $4) AND (CAST($5 AS TEXT) IS NULL OR b.location_id = $6)
       AND ($7 = '' OR LOWER(i.name) LIKE LOWER($8) ESCAPE '\\' OR LOWER(i.description) LIKE LOWER($9) ESCAPE '\\'
         OR LOWER(i.aliases_json) LIKE LOWER($10) ESCAPE '\\' OR LOWER(b.name) LIKE LOWER($11) ESCAPE '\\')
-    ORDER BY i.last_seen_at DESC NULLS LAST, i.name LIMIT 200`, [
+    ORDER BY i.last_seen_at DESC NULLS LAST, i.position, i.id LIMIT 200`, [
     req.user!.id,
     req.user!.id,
     binId,

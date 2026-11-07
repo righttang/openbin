@@ -112,3 +112,13 @@ extension InventoryItem {
                       crop_url: crop_url, photo_preview_url: photo_preview_url)
     }
 }
+
+/// Keep the same row identities in place while an edit changes the matching text.
+enum StableItemOrder {
+    static func merge(previous: [InventoryItem], incoming: [InventoryItem], edited: [String: InventoryItem]) -> [InventoryItem] {
+        let latest = Dictionary(uniqueKeysWithValues: incoming.map { ($0.id, $0) }).merging(edited) { _, correction in correction }
+        let retained = previous.compactMap { latest[$0.id] }
+        let retainedIDs = Set(retained.map(\.id))
+        return retained + incoming.filter { !retainedIDs.contains($0.id) }.map { edited[$0.id] ?? $0 }
+    }
+}

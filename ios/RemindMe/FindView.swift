@@ -11,10 +11,9 @@ struct FindView: View {
     @State private var activeVoiceID: String?
     @State private var selectedItem: InventoryItem?
     @State private var editedItems: [String: InventoryItem] = [:]
+    @State private var resultContext: String?
     private var visibleResults: [InventoryItem] {
-        let ids = Set(results.map(\.id))
-        return (results.map { editedItems[$0.id] ?? $0 } + editedItems.values.filter { !ids.contains($0.id) })
-            .filter { !store.deletedItemIDs.contains($0.id) }
+        results.map { editedItems[$0.id] ?? $0 }.filter { !store.deletedItemIDs.contains($0.id) }
     }
     var body: some View {
         List {
@@ -44,7 +43,7 @@ struct FindView: View {
             .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "名称、颜色、用途，例如白色充电线")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button { activeVoiceID = activeVoiceID == "search" ? nil : "search" } label: { Label("语音搜索", systemImage: "mic.fill") }
+                    Button { activeVoiceID = activeVoiceID == "search" ? nil : "search" } label: { Label("语音搜索", systemImage: "mic.fill").labelStyle(.iconOnly).font(.system(size: 22, weight: .semibold)).frame(minWidth: 44, minHeight: 44) }
                         .accessibilityIdentifier("find.voice")
                 }
             }
@@ -60,7 +59,10 @@ struct FindView: View {
                 do {
                     try await Task.sleep(for: .milliseconds(query.isEmpty ? 0 : 250))
                     let next = try await store.search(query, place: place)
-                    try Task.checkCancellation(); results = next; error = nil; loading = false
+                    try Task.checkCancellation()
+                    let context = "\(query)|\(place)"
+                    results = StableItemOrder.merge(previous: resultContext == context ? visibleResults : [], incoming: next, edited: editedItems)
+                    resultContext = context; error = nil; loading = false
                 } catch is CancellationError { }
                 catch { if !Task.isCancelled { self.error = "查找暂时失败，请下拉刷新后重试。"; loading = false } }
             }
@@ -72,13 +74,16 @@ struct FindView: View {
 
 struct ItemRow: View {
     let item: InventoryItem
+    var showContext = true
     var body: some View {
         HStack(spacing: 14) {
             RemotePhoto(path: item.crop_url ?? item.photo_preview_url, fallback: item.photo_preview_url).frame(width: 64, height: 64).clipShape(RoundedRectangle(cornerRadius: 12))
             VStack(alignment: .leading, spacing: 6) {
                 Text(item.name).font(.body.weight(.medium))
-                Label(item.bin_name, systemImage: "mappin.and.ellipse").font(.subheadline).foregroundStyle(.secondary)
-                Text(photoDate(item.last_seen_at)).font(.caption).foregroundStyle(.secondary)
+                if showContext {
+                    Label(item.bin_name, systemImage: "mappin.and.ellipse").font(.subheadline).foregroundStyle(.secondary)
+                    Text(photoDate(item.last_seen_at)).font(.caption).foregroundStyle(.secondary)
+                }
             }
             Spacer(minLength: 0)
         }.padding(.vertical, 8)
@@ -104,20 +109,25 @@ struct ItemActionsRow: View {
     private var current: InventoryItem { corrected ?? item }
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 0) {
+            HStack(spacing: 8) {
                 Button { activeVoiceID = nil; onOpen(current) } label: {
-                    ItemRow(item: current).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                    ItemRow(item: current, showContext: observationID == nil).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                 }.buttonStyle(.plain).accessibilityIdentifier("\(prefix).open.\(id)")
                 Button {
                     refinementError = nil
                     activeVoiceID = activeVoiceID == id ? nil : id
                 } label: {
-                    if refining { ProgressView().frame(width: 44, height: 44) }
-                    else { Image(systemName: activeVoiceID == id ? "waveform" : "mic.fill").frame(width: 44, height: 44) }
+                    if refining { ProgressView().frame(width: 56, height: 56) }
+                    else {
+                        Image(systemName: activeVoiceID == id ? "waveform" : "mic.fill").font(.system(size: 23, weight: .semibold))
+                            .frame(width: 56, height: 56)
+                            .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 16))
+                    }
                 }.buttonStyle(.borderless).disabled(deleting || refining)
                     .accessibilityLabel("语音补充\(current.name)").accessibilityIdentifier("\(prefix).voice.\(id)")
                 Button(role: .destructive) { activeVoiceID = nil; onDelete() } label: {
-                    Image(systemName: "trash").foregroundStyle(.red).frame(width: 44, height: 44)
+                    Image(systemName: "trash").font(.system(size: 22, weight: .medium)).foregroundStyle(.red)
+                        .frame(width: 56, height: 56).background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
                 }.buttonStyle(.borderless).disabled(deleting || refining)
                     .accessibilityLabel(observationID == nil ? "删除物品\(current.name)" : "删除识别结果\(current.name)")
                     .accessibilityIdentifier("\(prefix).delete.\(id)")

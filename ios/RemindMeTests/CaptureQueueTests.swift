@@ -254,3 +254,25 @@ extension CaptureQueueTests {
         }
     }
 }
+
+final class ItemOrderTests: XCTestCase {
+    private func item(_ id: String, _ name: String) -> InventoryItem {
+        InventoryItem(id: id, name: name, description: "", aliases: [], quantity: 1, bin_id: "desk", bin_name: "书桌",
+                      last_seen_at: nil, crop_url: nil, photo_preview_url: nil)
+    }
+    func testRenamedMiddleItemKeepsItsPositionWhenItNoLongerMatchesSearch() {
+        let original = [item("a", "camera A"), item("b", "camera B"), item("c", "camera C")]
+        let corrected = item("b", "小米室外摄像头")
+        let result = StableItemOrder.merge(previous: original, incoming: [original[0], original[2]], edited: ["b": corrected])
+        XCTAssertEqual(result.map(\.id), ["a", "b", "c"])
+        XCTAssertEqual(result[1].name, corrected.name)
+    }
+    func testRefreshKeepsRowsInPlaceAndAddsNewItemsAfterExistingRows() {
+        let original = [item("a", "Z"), item("b", "B"), item("c", "C")]
+        let incoming = [item("b", "A"), item("d", "D"), original[2], original[0]]
+        let result = StableItemOrder.merge(previous: original, incoming: incoming, edited: [:])
+        XCTAssertEqual(result.map(\.id), ["a", "b", "c", "d"])
+        XCTAssertEqual(result[1].name, "A")
+        XCTAssertEqual(StableItemOrder.merge(previous: [], incoming: incoming, edited: [:]).map(\.id), incoming.map(\.id))
+    }
+}

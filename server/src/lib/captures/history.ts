@@ -145,7 +145,7 @@ export async function listPhotoHistory(userId: string, binId: string | null, loc
     CASE WHEN op.crop_jpeg IS NOT NULL THEN 1 ELSE 0 END AS has_crop
     FROM observation_photos op JOIN observations o ON o.id=op.observation_id
     WHERE op.capture_id=$1 AND op.photo_id=$2 AND o.dismissed_at IS NULL
-    ORDER BY o.name,o.id`;
+    ORDER BY o.created_at,o.id`;
   return Promise.all(rows.map(async ({ has_preview, updated_at, ...photo }) => ({
     ...photo,
     preview_url: has_preview ? previewUrl(photo.capture_id, photo.photo_id, updated_at) : null,

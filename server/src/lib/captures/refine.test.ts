@@ -61,6 +61,21 @@ describe('spoken item correction', () => {
     expect(search.body.items.map((v: { id: string }) => v.id)).toContain(itemId);
     expect((getDb().prepare('SELECT revision FROM bin_capture_state WHERE bin_id=?').get(binId) as { revision: number }).revision).toBeGreaterThan(revision);
   });
+  it('keeps photo and inventory rows in the same order after renaming', async () => {
+    const db = getDb();
+    const otherItem = crypto.randomUUID(), otherObservation = crypto.randomUUID();
+    db.prepare("INSERT INTO bin_items (id,bin_id,name,position) VALUES (?,?,'Middle camera',1)").run(otherItem, binId);
+    db.prepare(`INSERT INTO observations (id,capture_id,item_id,name,description,quantity,aliases_json,photo_ids_json,created_at)
+      VALUES (?,?,?,'Middle camera','',1,'[]',?,?)`).run(otherObservation, captureId, otherItem, JSON.stringify([photoId]), at);
+    db.prepare('INSERT INTO observation_photos (observation_id,capture_id,photo_id,crop_jpeg) VALUES (?,?,?,?)').run(otherObservation, captureId, photoId, crop);
+    const history = async () => (await request(app).get('/api/captures/history').set('Authorization', `Bearer ${token}`)).body.photos[0].items.map((v: { observation_id: string }) => v.observation_id);
+    const inventory = async () => (await request(app).get('/api/captures/inventory').set('Authorization', `Bearer ${token}`)).body.items.map((v: { id: string }) => v.id);
+    const beforeHistory = await history(), beforeInventory = await inventory();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(envelope({ ...corrected, name: 'ZZZ renamed camera' })));
+    expect((await send()).status).toBe(200);
+    expect(await history()).toEqual(beforeHistory);
+    expect(await inventory()).toEqual(beforeInventory);
+  });
   it('also corrects from an inventory detail and falls back to the whole photo when no crop exists', async () => {
     getDb().prepare('UPDATE observation_photos SET crop_jpeg=NULL WHERE observation_id=?').run(observationId);
     const fetcher = vi.fn().mockResolvedValue(envelope()); vi.stubGlobal('fetch', fetcher);
