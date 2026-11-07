@@ -190,9 +190,13 @@ struct PlaceDescriptionView: View {
     var prefix = "place"
     var onSelect: (() -> Void)? = nil
     var managePlaces: (() -> Void)? = nil
+    var showDeduplication = true
     @State private var saving = false
     @State private var error: String?
     private var current: Place { store.places.first { $0.id == place.id } ?? place }
+    @State private var confirmingDeduplication = false
+    @State private var deduplicating = false
+    @State private var deduplicationMessage: String?
     private var voiceID: String { "place-\(place.id)" }
     private var label: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -219,12 +223,32 @@ struct PlaceDescriptionView: View {
                 } else if let onSelect {
                     Button(action: onSelect) { label }.buttonStyle(.plain).accessibilityIdentifier("\(prefix).select.\(place.id)")
                 } else { label }
+                if showDeduplication { Button { confirmingDeduplication = true } label: {
+                    Group {
+                        if deduplicating { ProgressView() }
+                        else { Image(systemName: "square.on.square").font(.system(size: 23, weight: .semibold)) }
+                    }.frame(width: 56, height: 56).background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 16))
+                }.buttonStyle(.borderless).disabled(deduplicating || saving)
+                    .accessibilityLabel("合并重复物品").accessibilityIdentifier("\(prefix).deduplicate.\(place.id)")
+                    .alert("合并“\(current.name)”里的重复物品？", isPresented: $confirmingDeduplication) {
+                        Button("识别并合并") {
+                            activeVoiceID = nil; deduplicating = true; error = nil; deduplicationMessage = nil
+                            Task {
+                                defer { deduplicating = false }
+                                do {
+                                    let result = try await store.deduplicatePlace(current)
+                                    deduplicationMessage = result.merged_items == 0 ? "没有发现可确认的重复物品" : "已合并 \(result.merged_items) 条重复记录，照片历史已保留"
+                                } catch { self.error = error.localizedDescription }
+                            }
+                        }
+                        Button("取消", role: .cancel) {}
+                    } message: { Text("结合照片判断是否是同一件实物。合并后共用一条物品记录，所有照片历史都会保留。") } }
                 Button { error = nil; activeVoiceID = activeVoiceID == voiceID ? nil : voiceID } label: {
                     Group {
                         if saving { ProgressView() }
                         else { Image(systemName: activeVoiceID == voiceID ? "waveform" : "mic.fill").font(.system(size: 23, weight: .semibold)) }
                     }.frame(width: 56, height: 56).background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 16))
-                }.buttonStyle(.borderless).disabled(saving)
+                }.buttonStyle(.borderless).disabled(saving || deduplicating)
                     .accessibilityLabel("语音修改位置说明").accessibilityIdentifier("\(prefix).voice.\(place.id)")
             }
             if activeVoiceID == voiceID {
@@ -238,6 +262,7 @@ struct PlaceDescriptionView: View {
                 }
             }
             if let error { Text(error).font(.caption).foregroundStyle(.red) }
+            if let deduplicationMessage { Text(deduplicationMessage).font(.caption).foregroundStyle(.secondary) }
         }
     }
 }

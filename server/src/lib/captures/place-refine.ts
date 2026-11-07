@@ -9,7 +9,7 @@ const placeCorrection = z.object({ name: z.string().trim().min(1).max(200), note
 interface PlaceRecord {
   id: string; name: string; notes: string; location_id: string; role: string; created_by: string | null;
 }
-async function loadPlace(id: string, userId: string, execute: TxQueryFn = query): Promise<PlaceRecord> {
+export async function loadPlace(id: string, userId: string, execute: TxQueryFn = query): Promise<PlaceRecord> {
   const row = (await execute<PlaceRecord>(`SELECT b.id,b.name,b.notes,b.location_id,b.created_by,lm.role
     FROM bins b JOIN location_members lm ON lm.location_id=b.location_id AND lm.user_id=$2
     WHERE b.id=$1 AND b.deleted_at IS NULL AND (b.visibility='location' OR b.created_by=$2)`, [id, userId])).rows[0];

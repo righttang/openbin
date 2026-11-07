@@ -4,6 +4,7 @@ import { asyncHandler } from '../lib/asyncHandler.js';
 import { verifyBinAccess } from '../lib/binAccess.js';
 import { cancelCapture } from '../lib/captures/cancel.js';
 import { captureConfig, supportedMimeTypes } from '../lib/captures/config.js';
+import { deduplicatePlace } from '../lib/captures/deduplicate.js';
 import { dismissObservation, dismissPhotoHistory, latestItemMedia, listPhotoHistory } from '../lib/captures/history.js';
 import { refinePlace } from '../lib/captures/place-refine.js';
 import { refineItem } from '../lib/captures/refine.js';
@@ -27,6 +28,10 @@ router.get('/config', (_req, res) => {
     modelConfigured: !!(process.env.AI_ENDPOINT_URL && process.env.AI_MODEL && process.env.AI_API_KEY),
   });
 });
+
+router.post('/places/:placeId/deduplicate', asyncHandler(async (req, res) => {
+  res.json(await deduplicatePlace(req.params.placeId, req.user!.id));
+}));
 
 router.get('/inventory', asyncHandler(async (req, res) => {
   const q = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 200) : '';

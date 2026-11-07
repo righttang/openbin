@@ -106,6 +106,12 @@ struct ItemRefinement: Decodable {
     let item_id: String?
     let observation_id: String?
 }
+struct PlaceDeduplication: Decodable {
+    struct Redirect: Decodable { let from_id: String; let into_id: String }
+    let merged_items: Int
+    let merged_groups: Int
+    let redirects: [Redirect]
+}
 extension InventoryItem {
     func corrected(name: String, description: String, aliases: [String]) -> InventoryItem {
         InventoryItem(id: id, name: name, description: description, aliases: aliases, quantity: quantity,

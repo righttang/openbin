@@ -163,7 +163,7 @@ export async function processNextCapture(options: CaptureWorkerOptions = {}): Pr
         throw new CaptureProcessingError('input_invalid', false);
       }
     }
-    const input = { captureId: claim.captureId, binName: claim.binName, photos, existingItems: claim.existingItems, signal };
+    const input = { captureId: claim.captureId, binId: claim.binId, binName: claim.binName, photos, existingItems: claim.existingItems, signal };
     if (signal.aborted) throw new CaptureProcessingError('worker_interrupted');
     const output = await (options.recognize ?? recognizeCapture)(input);
     if (signal.aborted) throw new CaptureProcessingError('worker_interrupted');

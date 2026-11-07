@@ -182,6 +182,14 @@ struct UndoRecord: Identifiable {
         revision += 1; saveCache()
         await refresh()
     }
+    func deduplicatePlace(_ place: Place) async throws -> PlaceDeduplication {
+        let result = try await api.deduplicatePlace(place.id)
+        for redirect in result.redirects { deletedItemIDs.insert(redirect.from_id) }
+        items.removeAll { deletedItemIDs.contains($0.id) }
+        revision += 1; saveCache()
+        await refresh()
+        return result
+    }
     func rename(_ place: Place, to name: String) async throws {
         try await api.mutate("/api/bins/\(place.id)", method: "PUT", body: ["name": name]); await refresh()
     }

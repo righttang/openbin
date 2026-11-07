@@ -18,7 +18,7 @@ ui_tests.add_dependency(app)
     config.build_settings.merge!({
       'SWIFT_VERSION'=>'5.0', 'IPHONEOS_DEPLOYMENT_TARGET'=>'17.0', 'TARGETED_DEVICE_FAMILY'=>'1',
       'CODE_SIGN_STYLE'=>'Automatic', 'PRODUCT_BUNDLE_IDENTIFIER'=>"com.righttang.remindme#{target == app ? '' : '.' + folder.downcase}",
-      'MARKETING_VERSION'=>'1.0.12', 'CURRENT_PROJECT_VERSION'=>'13', 'GENERATE_INFOPLIST_FILE'=>'YES',
+      'MARKETING_VERSION'=>'1.0.13', 'CURRENT_PROJECT_VERSION'=>'14', 'GENERATE_INFOPLIST_FILE'=>'YES',
       'SWIFT_EMIT_LOC_STRINGS'=>'YES'
     })
     config.build_settings['SWIFT_ACTIVE_COMPILATION_CONDITIONS'] = 'DEBUG' if config.name == 'Debug'

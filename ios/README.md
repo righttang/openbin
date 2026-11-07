@@ -93,6 +93,10 @@ python3 ios/scripts/test-local.py
 
 真实模型的朝向检查：先构建服务端，再在项目根目录运行 `node --env-file=.env scripts/verify-photo-orientation.mjs`。它只发送四张合成书封面，不写数据库。已有预览可用 `server/scripts/reorient-history.mjs --apply` 校正，保留识别和物品记录。
 
+地点名称旁的重叠方块按钮用于合并已有重复物品，确认后由服务器结合物品裁剪和原场景判断身份，保留所有照片历史和手动修正的说明。数量不累加，列表保留最早的位置。同一照片里同时出现的独立物品不会合并。新照片识别也会参考该地点已有物品的裁剪图，匹配到同一实物时复用记录。
+
+真实模型去重验收：构建服务端后运行 `node --env-file=.env scripts/verify-place-dedup.mjs`，使用独立的内存数据库和合成书封面，检查重复视角合并、不同书籍保留，以及后续拍照复用原物品。不会修改本地或生产 PostgreSQL。
+
 ## 实现参考
 
 相机采用 Apple 的 [AVFoundation 捕获会话](https://developer.apple.com/documentation/avfoundation/setting-up-a-capture-session)。内网访问声明[本地网络用途](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy)，HTTP 例外仅配置私有 IPv4 网段和 localhost，参见 [ATS 本地网络设置](https://developer.apple.com/documentation/bundleresources/information-property-list/nsapptransportsecurity/nsallowslocalnetworking)。

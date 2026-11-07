@@ -68,6 +68,11 @@ struct FindView: View {
             }
             .onChange(of: query) { _, _ in editedItems = [:] }
             .onChange(of: place) { _, _ in editedItems = [:] }
+            .onChange(of: store.items) { _, latest in
+                let fresh = Dictionary(uniqueKeysWithValues: latest.map { ($0.id, $0) })
+                for id in Array(editedItems.keys) { if let item = fresh[id] { editedItems[id] = item } }
+            }
+            .onChange(of: store.deletedItemIDs) { _, deleted in editedItems = editedItems.filter { !deleted.contains($0.key) } }
             .refreshable { editedItems = [:]; await store.activate() }
     }
 }
@@ -198,7 +203,7 @@ struct ItemDetailView: View {
                 if let refinementError { Text(refinementError).font(.footnote).foregroundStyle(.red) }
                 if didRefine && !refining { Label("名称和说明已更新", systemImage: "checkmark.circle").font(.footnote).foregroundStyle(.green) }
                 Text(current.crop_url == nil ? "原照片预览" : "物品裁剪照片").font(.caption).foregroundStyle(.secondary)
-                PlaceDescriptionView(place: Place(id: current.bin_id, name: current.bin_name), activeVoiceID: $activeVoiceID, prefix: "item.place")
+                PlaceDescriptionView(place: Place(id: current.bin_id, name: current.bin_name), activeVoiceID: $activeVoiceID, prefix: "item.place", showDeduplication: false)
                 Text("最后看到：\(photoDate(current.last_seen_at))").font(.subheadline).foregroundStyle(.secondary)
                 if !current.description.isEmpty { Text(current.description).lineSpacing(5) }
                 if !current.aliases.isEmpty { Text(current.aliases.joined(separator: " · ")).font(.footnote).foregroundStyle(.secondary) }

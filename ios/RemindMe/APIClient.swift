@@ -101,6 +101,11 @@ actor APIClient: CaptureTransport {
                                  headers: ["Content-Type": "application/json"], timeout: 150)
         return try JSONDecoder().decode(Place.self, from: data)
     }
+    func deduplicatePlace(_ id: String) async throws -> PlaceDeduplication {
+        let data = try await raw("/api/captures/places/\(id)/deduplicate", method: "POST", body: Data("{}".utf8),
+                                 headers: ["Content-Type": "application/json"], timeout: 150)
+        return try JSONDecoder().decode(PlaceDeduplication.self, from: data)
+    }
     func refine(itemID: String, observationID: String?, instruction: String) async throws -> ItemRefinement {
         let path = observationID.map { "/api/captures/observations/\($0)/refine" } ?? "/api/captures/items/\(itemID)/refine"
         let data = try await raw(path, method: "POST", body: JSONSerialization.data(withJSONObject: ["instruction": instruction]),

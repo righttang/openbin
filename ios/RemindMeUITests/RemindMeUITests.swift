@@ -27,6 +27,31 @@ final class RemindMeUITests: XCTestCase {
         }
         if let id = fixtureID { _ = try await fixtureAPI("/api/bins/\(id)", method: "DELETE") }
     }
+    @MainActor func testPlaceDeduplicationRequiresConfirmationAndCanCancel() async throws {
+        guard ProcessInfo.processInfo.environment["REMINDME_RUN_UI_TESTS"] == "1" else { throw XCTSkip("Use the local test server") }
+        let profile = try await fixtureAPI("/api/auth/me")
+        guard profile["id"] as? String == ProcessInfo.processInfo.environment["REMINDME_EXPECT_TEST_PROFILE"] else { XCTFail("Wrong test profile"); return }
+        let fixture = try await fixtureAPI("/api/bins", method: "POST", body: ["name": "去重按钮验收", "locationId": profile["activeLocationId"]!, "items": ["保留的物品"]])
+        fixtureID = try XCTUnwrap(fixture["id"] as? String)
+        let app = XCUIApplication()
+        app.launchEnvironment["REMINDME_TEST_URL"] = "http://127.0.0.1:1453"
+        app.launchArguments += ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
+        app.launch()
+        let place = app.buttons["scan.place"]
+        XCTAssertTrue(place.waitForExistence(timeout: 20)); place.tap()
+        app.buttons["去重按钮验收"].tap()
+        let button = app.buttons["scan.place.deduplicate.\(fixtureID!)"]
+        XCTAssertTrue(button.waitForExistence(timeout: 5)); XCTAssertGreaterThanOrEqual(button.frame.width, 56)
+        button.tap()
+        XCTAssertTrue(app.buttons["识别并合并"].waitForExistence(timeout: 5))
+        let proof = XCTAttachment(screenshot: app.screenshot()); proof.name = "地点去重确认弹窗"; proof.lifetime = .keepAlways; add(proof)
+        app.buttons["取消"].tap()
+        XCTAssertTrue(button.exists)
+        let remaining = try await fixtureAPI("/api/captures/inventory?bin_id=\(fixtureID!)")
+        XCTAssertEqual((remaining["items"] as? [[String: Any]])?.count, 1)
+        button.tap(); app.buttons["识别并合并"].tap()
+        XCTAssertTrue(app.staticTexts["没有发现可确认的重复物品"].waitForExistence(timeout: 10))
+    }
     @MainActor func testManyResultsAndRepeatedVoiceEditsStayResponsive() async throws {
         guard let raw = ProcessInfo.processInfo.environment["REMINDME_MEMORY_FIXTURE"], let data = raw.data(using: .utf8) else { throw XCTSkip("Use the isolated memory stress runner") }
         let fixture = try JSONSerialization.jsonObject(with: data) as! [String: Any]

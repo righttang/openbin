@@ -35,7 +35,7 @@ FROM ${NODE_IMAGE}
 # (otherwise BuildKit reuses a stale layer and Trivy flags old CVEs).
 ARG APK_UPGRADE_BUST=0
 RUN : "apk-upgrade-bust=${APK_UPGRADE_BUST}" \
-    && apk upgrade --no-cache && apk add --no-cache postgresql-client \
+    && apk upgrade --no-cache && apk add --no-cache postgresql-client font-dejavu \
     && npm cache clean --force && rm -rf /usr/local/lib/node_modules/npm
 WORKDIR /app
 ENV NODE_ENV=production \

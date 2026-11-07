@@ -87,6 +87,28 @@ async function inventory() {
 }
 
 describe('PostgreSQL capture pipeline', () => {
+  it('consolidates overlapping photos and keeps the shared item until its last supporting photo is deleted', async () => {
+    const first = await queued();
+    await processNextCapture({ recognize: async () => recognized(first.photoId, null, 2) });
+    const original = (await inventory())[0];
+    const second = await queued();
+    await processNextCapture({ recognize: async () => recognized(second.photoId, null, 3) });
+    const duplicate = (await inventory()).find(item => item.id !== original.id)!;
+    vi.stubEnv('AI_ENDPOINT_URL', 'https://gateway.test/v1'); vi.stubEnv('AI_MODEL', 'vision'); vi.stubEnv('AI_API_KEY', 'test-key');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [{ finish_reason: 'stop', message: {
+      content: JSON.stringify({ groups: [[duplicate.id, original.id]] }),
+    } }] }))));
+    try {
+      const result = await request(app).post(`/api/captures/places/${binId}/deduplicate`).set('Authorization', `Bearer ${token}`).send({});
+      expect(result.status).toBe(200); expect(result.body.merged_items).toBe(1);
+      expect(await inventory()).toMatchObject([{ id: original.id, quantity: 3 }]);
+      expect((await query('SELECT item_id FROM observations')).rows).toEqual([{ item_id: original.id }, { item_id: original.id }]);
+      expect((await query('SELECT count(*) AS n FROM observation_photos WHERE crop_jpeg IS NOT NULL')).rows[0].n).toBe(2);
+      expect((await remove(second)).status).toBe(200);
+      expect(await inventory()).toMatchObject([{ id: original.id, quantity: 2 }]);
+      expect((await remove(first)).status).toBe(200); expect(await inventory()).toEqual([]);
+    } finally { vi.unstubAllGlobals(); vi.unstubAllEnvs(); }
+  });
   it('queues a burst on the server as soon as each file arrives and processes it without client completion calls', async () => {
     const captures = Array.from({ length: 12 }, () => ({ id: crypto.randomUUID(), photoId: crypto.randomUUID() }));
     for (const batch of captures) {

@@ -276,7 +276,7 @@ async function retractDismissedItems(affected: { item_id: string }[], binId: str
     const item = (await execute('SELECT * FROM bin_items WHERE id=$1', [itemId])).rows[0] as InventoryRow | undefined;
     if (!item || item.deleted_at) continue;
     const currentObservation = (await execute(`SELECT o.* FROM observations o JOIN capture_batches c ON c.id=o.capture_id
-      WHERE o.item_id=$1 AND o.capture_id=$2 AND c.cancelled_at IS NULL AND c.state IN ('applied','superseded') ORDER BY o.created_at DESC LIMIT 1`, [itemId, item.last_seen_batch_id])).rows[0] as ObservationRow | undefined;
+      WHERE o.item_id=$1 AND o.capture_id=$2 AND c.cancelled_at IS NULL AND c.state IN ('applied','superseded') ORDER BY o.created_at DESC,o.id DESC LIMIT 1`, [itemId, item.last_seen_batch_id])).rows[0] as ObservationRow | undefined;
     const surviving = (await execute(`SELECT o.*,c.captured_at FROM observations o JOIN capture_batches c ON c.id=o.capture_id
       WHERE o.item_id=$1 AND o.dismissed_at IS NULL AND c.cancelled_at IS NULL AND c.state IN ('applied','superseded')
         AND EXISTS (SELECT 1 FROM observation_photos op JOIN capture_photo_history h
