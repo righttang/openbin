@@ -279,6 +279,14 @@ final class ItemOrderTests: XCTestCase {
 
 
 final class PlaceDescriptionTests: XCTestCase {
+    func testMergeJobsSurviveCacheAndDistinguishZeroMergesFromPendingWork() throws {
+        let queued = try JSONDecoder().decode(PlaceJob.self, from: Data(#"{"id":"job","bin_id":"shelf","state":"queued","result":null,"error_category":null}"#.utf8))
+        XCTAssertTrue(queued.pending); XCTAssertTrue(queued.label.contains("排队"))
+        let completed = try JSONDecoder().decode(PlaceJob.self, from: Data(#"{"id":"job","bin_id":"shelf","state":"completed","result":{"merged_items":0,"merged_groups":0,"redirects":[]},"error_category":null}"#.utf8))
+        XCTAssertFalse(completed.pending); XCTAssertTrue(completed.label.contains("没有发现"))
+        let restored = try JSONDecoder().decode(PlaceJob.self, from: JSONEncoder().encode(completed))
+        XCTAssertEqual(restored.result?.merged_items, 0)
+    }
     func testOldCachedPlacesDecodeWithoutNotes() throws {
         let place = try JSONDecoder().decode(Place.self, from: Data(#"{"id":"desk","name":"书桌"}"#.utf8))
         XCTAssertNil(place.notes)

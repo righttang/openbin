@@ -16,6 +16,7 @@ beforeAll(async () => {
 });
 
 const TABLES = [
+  'place_jobs',
   'observation_photos',
   'capture_photo_history',
   'capture_item_baselines',

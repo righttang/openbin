@@ -13,6 +13,7 @@ const defaultScratch = process.env.NODE_ENV === 'test'
   : path.join(path.dirname(path.resolve(process.env.DATABASE_PATH || './data/openbin.db')), '..', 'capture-scratch');
 
 export const captureConfig = Object.freeze({
+  workerConcurrency: integer('CAPTURE_WORKER_CONCURRENCY', 3, 1, 3),
   scratchPath: path.resolve(process.env.CAPTURE_SCRATCH_PATH || defaultScratch),
   maxPhotos: integer('CAPTURE_MAX_PHOTOS', 20, 1, 20),
   maxPhotoBytes: integer('CAPTURE_MAX_PHOTO_BYTES', 5 * 1024 * 1024, 1, 20 * 1024 * 1024),

@@ -4,8 +4,8 @@ import { asyncHandler } from '../lib/asyncHandler.js';
 import { verifyBinAccess } from '../lib/binAccess.js';
 import { cancelCapture } from '../lib/captures/cancel.js';
 import { captureConfig, supportedMimeTypes } from '../lib/captures/config.js';
-import { deduplicatePlace } from '../lib/captures/deduplicate.js';
 import { dismissObservation, dismissPhotoHistory, latestItemMedia, listPhotoHistory } from '../lib/captures/history.js';
+import { cancelPlaceJob, enqueuePlaceJob, getPlaceJob, listPlaceJobs } from '../lib/captures/place-jobs.js';
 import { refinePlace } from '../lib/captures/place-refine.js';
 import { refineItem } from '../lib/captures/refine.js';
 import { authorizeCapture, captureStatus, completeCapture, createCapture, receivePhoto } from '../lib/captures/store.js';
@@ -23,6 +23,7 @@ router.get('/config', (_req, res) => {
   res.json({
     maxPhotos: captureConfig.maxPhotos,
     maxPhotoBytes: captureConfig.maxPhotoBytes,
+    workerConcurrency: captureConfig.workerConcurrency,
     supportedMimeTypes,
     uploadExpiryMs: captureConfig.uploadExpiryMs,
     modelConfigured: !!(process.env.AI_ENDPOINT_URL && process.env.AI_MODEL && process.env.AI_API_KEY),
@@ -30,8 +31,22 @@ router.get('/config', (_req, res) => {
 });
 
 router.post('/places/:placeId/deduplicate', asyncHandler(async (req, res) => {
-  res.json(await deduplicatePlace(req.params.placeId, req.user!.id));
+  const job = await enqueuePlaceJob(req.params.placeId, req.user!.id);
+  if (req.body?.queued === true) { res.status(202).json(job); return; }
+  // Older apps still receive their final result while the durable server job owns the work.
+  const deadline = Date.now() + 140_000;
+  while (Date.now() < deadline && !res.destroyed) {
+    const current = await getPlaceJob(job.id, req.user!.id);
+    if (current.state === 'completed') { res.json(current.result); return; }
+    if (current.state === 'failed' || current.state === 'cancelled') throw new HttpError(502, current.error_category ?? 'job_cancelled', '去重没有完成，原记录已保留。');
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+  if (!res.destroyed) throw new HttpError(504, 'job_pending', '任务已在服务器排队，稍后重新打开查看结果。');
 }));
+
+router.get('/place-jobs', asyncHandler(async (req, res) => { res.json({ jobs: await listPlaceJobs(req.user!.id) }); }));
+router.get('/place-jobs/:jobId', asyncHandler(async (req, res) => { res.json(await getPlaceJob(req.params.jobId, req.user!.id)); }));
+router.post('/place-jobs/:jobId/cancel', asyncHandler(async (req, res) => { res.json(await cancelPlaceJob(req.params.jobId, req.user!.id)); }));
 
 router.get('/inventory', asyncHandler(async (req, res) => {
   const q = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 200) : '';

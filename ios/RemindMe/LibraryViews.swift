@@ -196,7 +196,9 @@ struct PlaceDescriptionView: View {
     private var current: Place { store.places.first { $0.id == place.id } ?? place }
     @State private var confirmingDeduplication = false
     @State private var deduplicating = false
-    @State private var deduplicationMessage: String?
+    @State private var confirmCancelJob = false
+    private var latestJob: PlaceJob? { store.placeJobs.first { $0.bin_id == place.id } }
+    private var hasPendingJob: Bool { latestJob?.pending == true }
     private var voiceID: String { "place-\(place.id)" }
     private var label: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -225,19 +227,18 @@ struct PlaceDescriptionView: View {
                 } else { label }
                 if showDeduplication { Button { confirmingDeduplication = true } label: {
                     Group {
-                        if deduplicating { ProgressView() }
+                        if deduplicating || hasPendingJob { ProgressView() }
                         else { Image(systemName: "square.on.square").font(.system(size: 23, weight: .semibold)) }
                     }.frame(width: 56, height: 56).background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 16))
-                }.buttonStyle(.borderless).disabled(deduplicating || saving)
+                }.buttonStyle(.borderless).disabled(deduplicating || hasPendingJob || saving)
                     .accessibilityLabel("合并重复物品").accessibilityIdentifier("\(prefix).deduplicate.\(place.id)")
                     .alert("合并“\(current.name)”里的重复物品？", isPresented: $confirmingDeduplication) {
                         Button("识别并合并") {
-                            activeVoiceID = nil; deduplicating = true; error = nil; deduplicationMessage = nil
+                            activeVoiceID = nil; deduplicating = true; error = nil
                             Task {
                                 defer { deduplicating = false }
                                 do {
-                                    let result = try await store.deduplicatePlace(current)
-                                    deduplicationMessage = result.merged_items == 0 ? "没有发现可确认的重复物品" : "已合并 \(result.merged_items) 条重复记录，照片历史已保留"
+                                    try await store.deduplicatePlace(current)
                                 } catch { self.error = error.localizedDescription }
                             }
                         }
@@ -262,7 +263,23 @@ struct PlaceDescriptionView: View {
                 }
             }
             if let error { Text(error).font(.caption).foregroundStyle(.red) }
-            if let deduplicationMessage { Text(deduplicationMessage).font(.caption).foregroundStyle(.secondary) }
+            if showDeduplication, let job = latestJob {
+                HStack {
+                    Text(job.label).font(.caption).foregroundStyle(job.state == "failed" ? .red : .secondary)
+                    if job.pending { Button("取消任务") { confirmCancelJob = true }.font(.caption).buttonStyle(.borderless) }
+                }.accessibilityIdentifier("\(prefix).job.\(place.id)")
+                    .alert("取消去重任务？", isPresented: $confirmCancelJob) {
+                        Button("取消任务", role: .destructive) { Task { do { try await store.cancelPlaceJob(job) } catch { self.error = error.localizedDescription } } }
+                        Button("保留", role: .cancel) {}
+                    } message: { Text("停止尚未完成的合并，原记录会保留。") }
+            }
+        }
+        .task(id: latestJob?.id) {
+            while !Task.isCancelled && hasPendingJob {
+                try? await Task.sleep(for: .seconds(3))
+                guard !Task.isCancelled else { return }
+                if UIApplication.shared.applicationState == .active { await store.refresh() }
+            }
         }
     }
 }

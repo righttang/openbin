@@ -84,6 +84,10 @@ MIGRATION_TEST_DATABASE_URL=postgres://openbin_test:openbin_test@127.0.0.1:5433/
 
 新扫描每张照片是独立的 `web-instant` 任务。较早照片因慢上传或重试而晚完成时，其中独有物品仍会加入记录，同一物品较新的识别信息不会被旧照片覆盖。旧版本已保存的多图草稿仍可按原清单恢复。
 
+服务端默认最多同时处理 3 个 Job，照片识别和地点去重合并共用这 3 个名额，其余留在 PostgreSQL 队列。`CAPTURE_WORKER_CONCURRENCY` 可设为 1–3，重启服务后生效。每个任务独立续租、取消和重试；同地点的照片最终写入依次进行，若另一张照片先完成，只重新匹配物品身份，复用已识别的物品和定位框。拍摄时间较新的记录仍优先。
+
+地点去重提交后立即返回 Job ID，关掉 App 或服务器重启后仍会继续。App 显示排队、处理中、完成及实际合并数量，也可取消待完成的任务。合并结果和 Job 完成状态在同一个事务提交，失败保留原记录；连续点击会复用该地点尚未完成的 Job。`GET /api/captures/place-jobs` 查询最近任务，`POST /api/captures/places/:placeId/deduplicate` 带 `{ "queued": true }` 提交异步任务，`POST /api/captures/place-jobs/:jobId/cancel` 取消。
+
 支持 JPEG、PNG、WebP。照片在浏览器和服务端按方向旋转并缩小；无法解码的 HEIC 请转成 JPEG，或在 iPhone 相机里使用“兼容性最佳”。浏览器通过有容量限制的 IndexedDB 保存待上传照片；重新打开后按原批次和照片 ID 恢复。浏览器清理本地存储时，需要重新选择缺失的照片。
 
 成功或取消后，清理服务端临时原图；旧版整批任务被更新批次取代时也会清理。删除失败会重试；上传未完成和最终识别失败的原图默认 1 小时过期。照片历史另保留压缩预览和物品裁剪图，存入数据库（PostgreSQL 或 SQLite），随数据库一起备份；不保存 base64 或模型原始响应。

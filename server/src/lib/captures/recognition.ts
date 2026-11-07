@@ -156,7 +156,7 @@ Return only JSON with exactly this structure:
 {"usable":true,"photo_rotations":[{"photo_id":"supplied-photo-id","clockwise_degrees":0}],"items":[{"name":"USB-C cable","description":"Black braided cable with silver connectors","aliases":["charging cable"],"quantity":null,"existing_item_id":null,"photo_ids":["supplied-photo-id"],"regions":[{"photo_id":"supplied-photo-id","box":[0.1,0.2,0.6,0.7]}]}]}
 All seven fields are required for every item. Include one photo_rotations entry for every supplied photo. Include only supplied photo IDs. Region photo IDs must also occur in that item's photo_ids. Never return image data, base64, URLs, markdown, or extra fields.`;
 
-async function readImage(photo: RecognitionPhoto, signal?: AbortSignal): Promise<string> {
+export async function readImage(photo: RecognitionPhoto, signal?: AbortSignal): Promise<string> {
   signal?.throwIfAborted();
   let bytes: Buffer;
   try {

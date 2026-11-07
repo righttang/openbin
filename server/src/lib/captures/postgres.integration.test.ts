@@ -12,9 +12,10 @@ import { captureDirectory } from './cleanup.js';
 import { captureConfig } from './config.js';
 import { withCaptureTransaction } from './database.js';
 import { storePhotoPreview } from './history.js';
+import { enqueuePlaceJob } from './place-jobs.js';
 import type { RecognitionResult } from './recognition.js';
 import { commitRecognition } from './reconcile.js';
-import { claimCapture, processNextCapture } from './worker.js';
+import { claimCapture, processNextCapture, startCaptureWorker } from './worker.js';
 
 const app = createApp();
 let userId: string;
@@ -87,6 +88,66 @@ async function inventory() {
 }
 
 describe('PostgreSQL capture pipeline', () => {
+  it('uses one shared concurrency budget for a merge and photo recognition jobs', async () => {
+    const merge = await enqueuePlaceJob(binId, userId);
+    const batches = [] as Awaited<ReturnType<typeof queued>>[];
+    for (let index = 0; index < 3; index++) batches.push(await queued());
+    const started: string[] = [];
+    const wait = (id: string, signal: AbortSignal) => new Promise<never>((_resolve, reject) => {
+      started.push(id); signal.addEventListener('abort', () => reject(new Error('stopped')), { once: true });
+    });
+    const worker = startCaptureWorker({
+      recognize: input => wait(input.captureId, input.signal!),
+      deduplicate: (_bin, _user, options) => wait(merge.id, options.signal!),
+    });
+    try {
+      await vi.waitFor(() => expect(started).toHaveLength(3));
+      expect(started).toContain(merge.id);
+      expect((await query("SELECT count(*) AS n FROM place_jobs WHERE state='processing'")).rows[0].n).toBe(1);
+      expect((await query("SELECT count(*) AS n FROM analysis_jobs WHERE state='processing'")).rows[0].n).toBe(2);
+      expect((await query('SELECT state FROM capture_batches WHERE id=$1', [batches[2].id])).rows[0].state).toBe('queued');
+      expect(await claimCapture(new Date())).toBeUndefined();
+    } finally { await worker.stop(); }
+    expect((await query('SELECT state,attempts FROM place_jobs WHERE id=$1', [merge.id])).rows[0]).toEqual({ state: 'retry', attempts: 0 });
+  });
+  it('keeps three photo recognitions in flight, cancels one independently, and starts the fourth without waiting for the other two', async () => {
+    const batches: Awaited<ReturnType<typeof queued>>[] = [];
+    for (let index = 0; index < 4; index++) batches.push(await queued());
+    await query("UPDATE capture_batches SET source='web-instant'");
+    const started = new Map<string, () => void>();
+    let inFlight = 0, peak = 0;
+    const worker = startCaptureWorker({
+      recognize: input => new Promise((resolve, reject) => {
+        peak = Math.max(peak, ++inFlight);
+        const abort = () => { inFlight--; reject(new Error('cancelled request')); };
+        input.signal!.addEventListener('abort', abort, { once: true });
+        started.set(input.captureId, () => {
+          input.signal!.removeEventListener('abort', abort); inFlight--;
+          resolve(recognized(input.photos[0].id, null, batches.findIndex(batch => batch.id === input.captureId) + 1));
+        });
+      }),
+      rematch: async (input, result) => ({ ...result, items: result.items.map(item => ({ ...item, existing_item_id: input.existingItems[0].id })) }),
+    });
+    try {
+      await vi.waitFor(() => expect(started.size).toBe(3));
+      expect((await query("SELECT count(*) AS n FROM analysis_jobs WHERE state='processing'")).rows[0].n).toBe(3);
+      expect((await query('SELECT state FROM capture_batches WHERE id=$1', [batches[3].id])).rows[0].state).toBe('queued');
+      expect(await claimCapture(new Date())).toBeUndefined();
+      const cancelled = await request(app).post(`/api/captures/${batches[0].id}/cancel`).set('Authorization', `Bearer ${token}`).send({ bin_id: binId });
+      expect(cancelled.status).toBe(200);
+      await vi.waitFor(() => expect(started.has(batches[3].id)).toBe(true));
+      expect(peak).toBe(3);
+      // Complete newest first, then the two older photos. Neither can overwrite its count.
+      for (const index of [3, 1, 2]) {
+        started.get(batches[index].id)!();
+        await vi.waitFor(async () => expect((await query('SELECT state FROM capture_batches WHERE id=$1', [batches[index].id])).rows[0].state).toBe('applied'));
+      }
+      const items = await inventory();
+      expect(items).toHaveLength(1); expect(items[0]).toMatchObject({ quantity: 4, last_seen_batch_id: batches[3].id });
+      expect((await query("SELECT attempts FROM analysis_jobs WHERE state='applied'")).rows).toEqual([{ attempts: 1 }, { attempts: 1 }, { attempts: 1 }]);
+      expect((await query('SELECT count(*) AS n FROM observations WHERE capture_id=$1', [batches[0].id])).rows[0].n).toBe(0);
+    } finally { await worker.stop(); }
+  });
   it('consolidates overlapping photos and keeps the shared item until its last supporting photo is deleted', async () => {
     const first = await queued();
     await processNextCapture({ recognize: async () => recognized(first.photoId, null, 2) });
@@ -99,8 +160,11 @@ describe('PostgreSQL capture pipeline', () => {
       content: JSON.stringify({ groups: [[duplicate.id, original.id]] }),
     } }] }))));
     try {
-      const result = await request(app).post(`/api/captures/places/${binId}/deduplicate`).set('Authorization', `Bearer ${token}`).send({});
-      expect(result.status).toBe(200); expect(result.body.merged_items).toBe(1);
+      const queued = await request(app).post(`/api/captures/places/${binId}/deduplicate`).set('Authorization', `Bearer ${token}`).send({ queued: true });
+      expect(queued.status).toBe(202);
+      await processNextCapture();
+      const result = await request(app).get(`/api/captures/place-jobs/${queued.body.id}`).set('Authorization', `Bearer ${token}`);
+      expect(result.status).toBe(200); expect(result.body).toMatchObject({ state: 'completed', result: { merged_items: 1 } });
       expect(await inventory()).toMatchObject([{ id: original.id, quantity: 3 }]);
       expect((await query('SELECT item_id FROM observations')).rows).toEqual([{ item_id: original.id }, { item_id: original.id }]);
       expect((await query('SELECT count(*) AS n FROM observation_photos WHERE crop_jpeg IS NOT NULL')).rows[0].n).toBe(2);

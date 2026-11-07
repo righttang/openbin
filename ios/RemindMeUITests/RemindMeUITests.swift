@@ -50,7 +50,7 @@ final class RemindMeUITests: XCTestCase {
         let remaining = try await fixtureAPI("/api/captures/inventory?bin_id=\(fixtureID!)")
         XCTAssertEqual((remaining["items"] as? [[String: Any]])?.count, 1)
         button.tap(); app.buttons["识别并合并"].tap()
-        XCTAssertTrue(app.staticTexts["没有发现可确认的重复物品"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["去重完成 · 没有发现可确认的重复物品"].waitForExistence(timeout: 15))
     }
     @MainActor func testManyResultsAndRepeatedVoiceEditsStayResponsive() async throws {
         guard let raw = ProcessInfo.processInfo.environment["REMINDME_MEMORY_FIXTURE"], let data = raw.data(using: .utf8) else { throw XCTSkip("Use the isolated memory stress runner") }

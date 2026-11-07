@@ -16,6 +16,7 @@ export interface ClaimedCapture {
   sequence: number;
   capturedAt: string;
   revision: number;
+  appliedCount: number;
   leaseToken: string;
   attempts: number;
   existingItems: ExistingCaptureItem[];

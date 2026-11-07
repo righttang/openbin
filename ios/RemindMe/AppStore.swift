@@ -1,7 +1,7 @@
 import SwiftUI
 import CryptoKit
 
-struct LibraryCache: Codable { let places: [Place]; let items: [InventoryItem]; let history: [HistoryPhoto] }
+struct LibraryCache: Codable { let places: [Place]; let items: [InventoryItem]; let history: [HistoryPhoto]; var placeJobs: [PlaceJob]? = nil }
 struct UndoRecord: Identifiable {
     let id = UUID()
     let name: String
@@ -14,6 +14,7 @@ struct UndoRecord: Identifiable {
     @Published var places: [Place] = []
     @Published var items: [InventoryItem] = []
     @Published var history: [HistoryPhoto] = []
+    @Published var placeJobs: [PlaceJob] = []
     @Published var selectedPlaceID: String { didSet { UserDefaults.standard.set(selectedPlaceID, forKey: "place:\(server)") } }
     @Published var connected = false
     @Published var loading = false
@@ -58,11 +59,11 @@ struct UndoRecord: Identifiable {
     }
     private func loadCache() {
         if let data = try? Data(contentsOf: scope.appendingPathComponent("library.json")), let cached = try? JSONDecoder().decode(LibraryCache.self, from: data) {
-            places = cached.places; items = cached.items; history = cached.history
+            places = cached.places; items = cached.items; history = cached.history; placeJobs = cached.placeJobs ?? []
         }
     }
     private func saveCache() {
-        try? JSONEncoder().encode(LibraryCache(places: places, items: items, history: history)).write(to: scope.appendingPathComponent("library.json"), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        try? JSONEncoder().encode(LibraryCache(places: places, items: items, history: history, placeJobs: placeJobs)).write(to: scope.appendingPathComponent("library.json"), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
     func activate() async { queue.start(); await refresh() }
     func refresh() async {
@@ -77,7 +78,10 @@ struct UndoRecord: Identifiable {
             async let newPlaces = api.places(locationID: profile.activeLocationId)
             async let newItems = api.inventory()
             async let newHistory = api.history()
-            let values = try await (newPlaces, newItems, newHistory)
+            async let jobs = api.placeJobs()
+            let values = try await (newPlaces, newItems, newHistory, jobs)
+            placeJobs = values.3
+            for redirect in placeJobs.compactMap(\.result).flatMap(\.redirects) { deletedItemIDs.insert(redirect.from_id) }
             places = StablePlaceOrder.merge(previous: places, incoming: values.0)
             items = values.1.filter { !deletedItemIDs.contains($0.id) }
             history = values.2.filter { !removedPhotoIDs.contains($0.id) }.map { photo in
@@ -103,7 +107,7 @@ struct UndoRecord: Identifiable {
         guard !refreshing else { throw APIError.message("正在刷新，请稍后再试。") }
         queue.stop(); api = candidate; server = url.absoluteString; scope = Self.folder(server)
         queue = CaptureQueue(api: candidate, folder: scope.appendingPathComponent("uploads"), backgroundUploader: BackgroundPhotoUploader.shared); wireQueue()
-        places = []; items = []; history = []; undo = []; deletedItemIDs = []; removedPhotoIDs = []; removedObservationIDs = []
+        places = []; items = []; history = []; placeJobs = []; undo = []; deletedItemIDs = []; removedPhotoIDs = []; removedObservationIDs = []
         selectedPlaceID = UserDefaults.standard.string(forKey: "place:\(server)") ?? ""
         UserDefaults.standard.set(server, forKey: "remindme-server")
         loadCache(); await activate()
@@ -182,13 +186,15 @@ struct UndoRecord: Identifiable {
         revision += 1; saveCache()
         await refresh()
     }
-    func deduplicatePlace(_ place: Place) async throws -> PlaceDeduplication {
-        let result = try await api.deduplicatePlace(place.id)
-        for redirect in result.redirects { deletedItemIDs.insert(redirect.from_id) }
-        items.removeAll { deletedItemIDs.contains($0.id) }
+    func deduplicatePlace(_ place: Place) async throws {
+        let job = try await api.deduplicatePlace(place.id)
+        placeJobs.removeAll { $0.id == job.id }; placeJobs.insert(job, at: 0)
         revision += 1; saveCache()
         await refresh()
-        return result
+    }
+    func cancelPlaceJob(_ job: PlaceJob) async throws {
+        try await api.mutate("/api/captures/place-jobs/\(job.id)/cancel")
+        await refresh()
     }
     func rename(_ place: Place, to name: String) async throws {
         try await api.mutate("/api/bins/\(place.id)", method: "PUT", body: ["name": name]); await refresh()

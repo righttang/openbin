@@ -106,12 +106,31 @@ struct ItemRefinement: Decodable {
     let item_id: String?
     let observation_id: String?
 }
-struct PlaceDeduplication: Decodable {
-    struct Redirect: Decodable { let from_id: String; let into_id: String }
+struct PlaceDeduplication: Codable {
+    struct Redirect: Codable { let from_id: String; let into_id: String }
     let merged_items: Int
     let merged_groups: Int
     let redirects: [Redirect]
 }
+struct PlaceJob: Codable, Identifiable {
+    let id: String
+    let bin_id: String
+    let state: String
+    let result: PlaceDeduplication?
+    let error_category: String?
+    var pending: Bool { ["queued", "processing", "retry"].contains(state) }
+    var label: String {
+        switch state {
+        case "queued": return "去重已排队 · 可以关闭 App"
+        case "retry": return "去重等待重试 · 服务器会继续处理"
+        case "processing": return "服务器正在识别并合并…"
+        case "completed": return result?.merged_items == 0 ? "去重完成 · 没有发现可确认的重复物品" : "去重完成 · 已合并 \(result?.merged_items ?? 0) 条重复记录，照片历史已保留"
+        case "cancelled": return "去重已取消"
+        default: return "去重未完成，原记录已保留，可重新尝试"
+        }
+    }
+}
+struct PlaceJobList: Decodable { let jobs: [PlaceJob] }
 extension InventoryItem {
     func corrected(name: String, description: String, aliases: [String]) -> InventoryItem {
         InventoryItem(id: id, name: name, description: description, aliases: aliases, quantity: quantity,

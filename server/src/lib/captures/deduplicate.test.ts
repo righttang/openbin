@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getDb } from '../../db.js';
 import { createApp } from '../../index.js';
 import { signToken } from '../../middleware/auth.js';
+import { HttpError } from '../httpErrors.js';
+import { deduplicatePlace } from './deduplicate.js';
 import { dismissPhotoHistory } from './history.js';
 import { recognizeCapture } from './recognition.js';
 
@@ -14,7 +16,10 @@ const at = '2026-11-01T12:00:00.000Z';
 const later = '2026-11-02T12:00:00.000Z';
 const envelope = (groups: string[][]) => new Response(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ groups }) } }] }));
 const row = (id: string) => getDb().prepare('SELECT * FROM bin_items WHERE id=?').get(id) as Record<string, unknown>;
-const send = () => request(app).post(`/api/captures/places/${binId}/deduplicate`).set('Authorization', `Bearer ${token}`).send({});
+const send = async () => {
+  try { return { status: 200, body: await deduplicatePlace(binId, userId) }; }
+  catch (error) { if (error instanceof HttpError) return { status: error.statusCode, body: { merged_items: undefined } }; throw error; }
+};
 
 function evidence(name: string, position = 0, quantity: number | null = 1, bin = binId, shared?: { captureId: string; photoId: string }) {
   const db = getDb(), id = crypto.randomUUID(), observationId = crypto.randomUUID();

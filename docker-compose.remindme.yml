@@ -24,6 +24,7 @@ services:
       DATABASE_PATH: /data/remindme.db
       PHOTO_STORAGE_PATH: /data/photos
       CAPTURE_SCRATCH_PATH: /scratch
+      CAPTURE_WORKER_CONCURRENCY: ${CAPTURE_WORKER_CONCURRENCY:-3}
       COOKIE_SECURE: ${COOKIE_SECURE:-true}
     read_only: true
     tmpfs:

@@ -20,6 +20,7 @@ const { initialize, closeDb } = await import('../server/dist/db/init.js');
 const { getDb } = await import('../server/dist/db.js');
 const { deduplicatePlace } = await import('../server/dist/lib/captures/deduplicate.js');
 const { recognizeCapture } = await import('../server/dist/lib/captures/recognition.js');
+const { rematchCapture } = await import('../server/dist/lib/captures/rematch.js');
 function book(title, color) {
   return sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="480" height="640">
     <rect width="480" height="640" fill="#eee9df"/><rect x="40" y="25" width="400" height="590" rx="10" fill="white" stroke="#26364b" stroke-width="8"/>
@@ -57,10 +58,16 @@ try {
   assert.deepEqual(merged.redirects, [{ from_id: ids[1], into_id: ids[0] }]);
   assert.equal(db.prepare('SELECT count(*) AS n FROM capture_photo_history WHERE dismissed_at IS NULL').get().n, 3);
   const storage_path = path.join(folder, 'new-view.jpg'); await fs.writeFile(storage_path, home);
-  const matched = await recognizeCapture({ captureId: crypto.randomUUID(), binId: bin, binName: 'Book shelf',
+  const recognitionInput = { captureId: crypto.randomUUID(), binId: bin, binName: 'Book shelf',
     existingItems: [0, 2].map(index => ({ id: ids[index], name: index ? 'Garden handbook' : 'Home handbook', description: '', aliases: [], quantity: 1 })),
-    photos: [{ id: 'new-view', storage_path, size: home.length, sha256: crypto.createHash('sha256').update(home).digest('hex') }] });
+    photos: [{ id: 'new-view', storage_path, size: home.length, sha256: crypto.createHash('sha256').update(home).digest('hex') }] };
+  const matched = await recognizeCapture(recognitionInput);
   assert.equal(matched.items.length, 1); assert.equal(matched.items[0].existing_item_id, ids[0]);
+  const rematched = await rematchCapture(recognitionInput, { ...matched, items: matched.items.map(item => ({ ...item, existing_item_id: null })) }, []);
+  assert.equal(rematched.items[0].existing_item_id, ids[0]);
+  assert.deepEqual(rematched.items[0].regions, matched.items[0].regions);
+  assert.deepEqual(rematched.photo_rotations, matched.photo_rotations);
   console.log(JSON.stringify({ verified: true, merged_duplicates: merged.merged_items, distinct_book_preserved: true,
-    photo_history_preserved: 3, subsequent_photo_matched_existing: true, elapsed_seconds: Math.round((Date.now() - started) / 1000) }));
+    photo_history_preserved: 3, subsequent_photo_matched_existing: true, parallel_identity_rematch: true,
+    elapsed_seconds: Math.round((Date.now() - started) / 1000) }));
 } finally { await closeDb(); await fs.rm(folder, { recursive: true, force: true }); }

@@ -9,7 +9,7 @@ import { dismissPhotoHistory, listPhotoHistory, storePhotoPreview } from './hist
 import { makePhotoPreview } from './media.js';
 import type { RecognitionResult, Recognizer } from './recognition.js';
 import { CaptureProcessingError, recognizeCapture, validateRecognition } from './recognition.js';
-import { processNextCapture } from './worker.js';
+import { claimCapture, processNextCapture, startCaptureWorker } from './worker.js';
 
 const userId = 'capture-test-user';
 const locationId = 'capture-test-location';
@@ -217,17 +217,66 @@ describe('durable capture recognition', () => {
     expect(job(batch.jobId)).toMatchObject({ state: 'applied', attempts: 2 });
   });
 
-  it('does not claim a live lease or run two recognizers concurrently', async () => {
-    const first = capture(1);
-    const second = capture(2);
-    let finish!: (result: RecognitionResult) => void;
-    const running = processNextCapture({ recognize: () => new Promise((resolve) => { finish = resolve; }) });
-    expect(await processNextCapture({ recognize: async () => recognized(second.photos.map((p) => p.id)) })).toBe(false);
-    expect(job(second.jobId).state).toBe('queued');
-    await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
-    finish(recognized(first.photos.map((p) => p.id)));
-    await running;
-    expect(job(first.jobId).state).toBe('applied');
+  it('runs exactly three recognizers and leaves a fourth photo in the durable queue', async () => {
+    const batches = Array.from({ length: 4 }, (_, index) => capture(index + 1, 1));
+    const finishes = new Map<string, () => void>();
+    const recognize = vi.fn<Recognizer>(input => new Promise(resolve => {
+      finishes.set(input.captureId, () => resolve(recognized(input.photos.map(p => p.id))));
+    }));
+    const running = Array.from({ length: 3 }, () => processNextCapture({ recognize }));
+    try {
+      await vi.waitFor(() => expect(finishes.size).toBe(3));
+      expect(await processNextCapture({ recognize })).toBe(false);
+      expect(recognize).toHaveBeenCalledTimes(3); expect(job(batches[3].jobId).state).toBe('queued');
+      // A second worker process cannot claim a fourth job either.
+      expect(await claimCapture(new Date())).toBeUndefined();
+    } finally { for (const finish of finishes.values()) finish(); await Promise.all(running); }
+    expect(job(batches[0].jobId).state).toBe('applied');
+  });
+
+  it('refills a free slot while two slow recognizers are still running and drains all slots on stop', async () => {
+    const batches = Array.from({ length: 4 }, (_, index) => capture(index + 1, 1));
+    const finishes = new Map<string, () => void>();
+    let inFlight = 0, peak = 0;
+    const worker = startCaptureWorker({ recognize: input => new Promise((resolve, reject) => {
+      peak = Math.max(peak, ++inFlight);
+      input.signal!.addEventListener('abort', () => { inFlight--; reject(new CaptureProcessingError('worker_interrupted')); }, { once: true });
+      finishes.set(input.captureId, () => { inFlight--; resolve(recognized(input.photos.map(p => p.id))); });
+    }) });
+    try {
+      await vi.waitFor(() => expect(finishes.size).toBe(3));
+      finishes.get(batches[0].id)!();
+      await vi.waitFor(() => expect(finishes.has(batches[3].id)).toBe(true));
+      expect(peak).toBe(3); expect(job(batches[1].jobId).state).toBe('processing');
+    } finally { await worker.stop(); }
+    for (const batch of batches.slice(1)) expect(job(batch.jobId)).toMatchObject({ state: 'retry', attempts: 0, error_category: 'worker_interrupted' });
+    expect(getDb().prepare("SELECT COUNT(*) AS n FROM analysis_jobs WHERE state='processing'").get()).toEqual({ n: 0 });
+  });
+
+  it('reuses photo analysis for same-place commits and preserves the newest capture when results finish out of order', async () => {
+    const batches = Array.from({ length: 3 }, (_, index) => capture(index + 1, 1));
+    const db = getDb();
+    for (const [index, batch] of batches.entries()) db.prepare("UPDATE capture_batches SET source='web-instant',captured_at=? WHERE id=?")
+      .run(`2026-11-0${index + 1}T12:00:00.000Z`, batch.id);
+    const finishes = new Map<string, () => void>();
+    const recognize = vi.fn<Recognizer>(input => new Promise(resolve => {
+      finishes.set(input.captureId, () => resolve(recognized(input.photos.map(p => p.id), null, batches.findIndex(b => b.id === input.captureId) + 1)));
+    }));
+    const rematch = vi.fn(async (input: Parameters<Recognizer>[0], result: RecognitionResult) => ({
+      ...result, items: result.items.map(item => ({ ...item, existing_item_id: input.existingItems[0].id })),
+    }));
+    const running = batches.map(() => processNextCapture({ recognize, rematch }));
+    try {
+      await vi.waitFor(() => expect(finishes.size).toBe(3));
+      for (const index of [2, 0, 1]) {
+        finishes.get(batches[index].id)!();
+        await vi.waitFor(() => expect(job(batches[index].jobId).state).toBe('applied'));
+      }
+    } finally { for (const finish of finishes.values()) finish(); await Promise.all(running); }
+    expect(recognize).toHaveBeenCalledTimes(3); expect(rematch).toHaveBeenCalledTimes(2);
+    expect(db.prepare('SELECT quantity,last_seen_batch_id FROM bin_items').all()).toEqual([{ quantity: 3, last_seen_batch_id: batches[2].id }]);
+    expect(db.prepare('SELECT COUNT(DISTINCT item_id) AS n FROM observations').get()).toEqual({ n: 1 });
+    for (const batch of batches) expect(job(batch.jobId)).toMatchObject({ state: 'applied', attempts: 1 });
   });
 
   it('does not steal an unexpired lease from another process', async () => {

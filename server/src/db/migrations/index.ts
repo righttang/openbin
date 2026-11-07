@@ -16,6 +16,7 @@ import { captureHistory } from './0015_capture_history.js';
 import { capturePostgres } from './0016_capture_postgres.js';
 import { captureCancellation } from './0017_capture_cancellation.js';
 import { observationCorrections } from './0018_observation_corrections.js';
+import { placeJobs } from './0019_place_jobs.js';
 import type { Migration } from './types.js';
 
 /**
@@ -41,4 +42,5 @@ export const migrations: Migration[] = [
   capturePostgres,
   captureCancellation,
   observationCorrections,
+  placeJobs,
 ];
