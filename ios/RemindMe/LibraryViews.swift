@@ -119,7 +119,7 @@ struct PhotoDetailView: View {
                         HStack(spacing: 12) {
                             NavigationLink { ItemDetailView(item: inventory, observationID: item.id) } label: { ItemRow(item: inventory) }.accessibilityIdentifier("result.open.\(item.id)")
                             Button(role: .destructive) { removalTarget = item; confirm = true } label: {
-                                Label("删除", systemImage: "trash").font(.subheadline).frame(minHeight: 44)
+                                Label("删除", systemImage: "trash").labelStyle(.iconOnly).font(.body).foregroundStyle(.red).frame(width: 44, height: 44)
                             }.buttonStyle(.borderless).disabled(deleting).accessibilityLabel("删除识别结果\(item.name)").accessibilityIdentifier("result.delete.\(item.id)")
                         }
                     }
