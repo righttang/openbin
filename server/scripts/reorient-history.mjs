@@ -1,7 +1,7 @@
 // One-off orientation of existing PostgreSQL history, without changing recognition or inventory.
 // Preview: node --env-file=../.env scripts/reorient-history.mjs
 // Apply:   node --env-file=../.env scripts/reorient-history.mjs --apply
-// Container: docker exec -i -e REMINDME_APP_ROOT=/app CONTAINER node --input-type=module -- --apply < server/scripts/reorient-history.mjs
+// Container: docker exec -i -e REMINDME_APP_ROOT=/app CONTAINER node --input-type=module - --apply < server/scripts/reorient-history.mjs
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
