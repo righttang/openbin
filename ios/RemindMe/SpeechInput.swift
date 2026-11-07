@@ -129,48 +129,56 @@ import SwiftUI
     }
 }
 
-struct VoiceInputSheet: View {
-    let title: String
+struct InlineVoiceInput: View {
     let hint: String
     let actionTitle: String
+    let onCancel: () -> Void
     let onSubmit: (String) -> Void
-    @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var speech = SpeechInput()
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 20) {
-                Text(hint).font(.subheadline).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
-                TextEditor(text: $speech.text).font(.title3).frame(minHeight: 120, maxHeight: 220)
-                    .padding(10).background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
-                    .accessibilityIdentifier("voice.transcript")
-                if speech.preparing { ProgressView("正在准备麦克风…") }
-                else {
-                    Button {
-                        if speech.listening { speech.stopListening() }
-                        else { Task { await speech.start() } }
-                    } label: {
-                        Label(speech.listening ? "正在听，点此暂停" : "重新说一遍", systemImage: speech.listening ? "waveform" : "mic.fill")
-                            .font(.headline).padding().frame(maxWidth: .infinity)
-                    }.buttonStyle(.bordered).tint(speech.listening ? .red : .accentColor).disabled(speech.finishing)
-                        .accessibilityIdentifier("voice.microphone")
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                if speech.preparing { ProgressView().controlSize(.small) }
+                Image(systemName: speech.listening ? "waveform" : "mic")
+                    .foregroundStyle(speech.listening ? .red : .secondary)
+                Text(speech.preparing ? "正在准备…" : speech.listening ? "正在听…" : "补充说明")
+                    .font(.subheadline.weight(.medium))
+                Spacer()
+                Button { speech.cancel(); onCancel() } label: {
+                    Image(systemName: "xmark").frame(width: 44, height: 36)
+                }.buttonStyle(.borderless).accessibilityLabel("取消语音").accessibilityIdentifier("voice.cancel")
+            }
+            TextField(hint, text: $speech.text, axis: .vertical)
+                .lineLimit(2...5).padding(12).background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 10))
+                .accessibilityIdentifier("voice.transcript")
+            if let error = speech.error {
+                HStack(alignment: .top) {
+                    Text(error).font(.caption).foregroundStyle(.secondary)
+                    if speech.needsSettings { Link("设置", destination: URL(string: UIApplication.openSettingsURLString)!).font(.caption) }
                 }
-                if let error = speech.error { Text(error).font(.footnote).foregroundStyle(.red) }
-                if speech.needsSettings {
-                    Link("打开系统设置", destination: URL(string: UIApplication.openSettingsURLString)!).font(.subheadline)
-                }
-                Spacer(minLength: 0)
+            }
+            HStack {
                 Button {
-                    speech.finish { text in onSubmit(text); dismiss() }
+                    if speech.listening { speech.stopListening() }
+                    else { Task { await speech.start() } }
                 } label: {
-                    HStack { if speech.finishing { ProgressView().tint(.white) }; Text(speech.finishing ? "正在确认语音…" : actionTitle) }
-                        .frame(maxWidth: .infinity).padding(.vertical, 8)
+                    Label(speech.listening ? "暂停" : "重说", systemImage: speech.listening ? "stop.fill" : "mic.fill")
+                }.buttonStyle(.borderless).disabled(speech.preparing || speech.finishing).accessibilityIdentifier("voice.microphone")
+                Spacer()
+                Button {
+                    speech.finish { text in onSubmit(text) }
+                } label: {
+                    HStack(spacing: 6) {
+                        if speech.finishing { ProgressView().controlSize(.small) }
+                        Text(speech.finishing ? "确认中…" : actionTitle)
+                    }
                 }.buttonStyle(.borderedProminent)
                     .disabled(speech.preparing || speech.finishing || speech.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .accessibilityIdentifier("voice.submit")
-            }.padding(20).navigationTitle(title).navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("取消") { speech.cancel(); dismiss() } } }
-        }.task { await speech.start() }
+            }
+        }.padding(12).background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
+            .task { await speech.start() }
             .onDisappear { speech.cancel() }
             .onChange(of: scenePhase) { _, phase in if phase == .background { speech.cancel() } }
     }

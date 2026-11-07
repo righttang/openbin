@@ -8,39 +8,47 @@ struct FindView: View {
     @State private var loading = false
     @State private var error: String?
     @State private var removalTarget: InventoryItem?
-    @State private var voiceSearch = false
+    @State private var activeVoiceID: String?
+    @State private var selectedItem: InventoryItem?
+    @State private var editedItems: [String: InventoryItem] = [:]
+    private var visibleResults: [InventoryItem] {
+        let ids = Set(results.map(\.id))
+        return (results.map { editedItems[$0.id] ?? $0 } + editedItems.values.filter { !ids.contains($0.id) })
+            .filter { !store.deletedItemIDs.contains($0.id) }
+    }
     var body: some View {
         List {
             ConnectionNote().listRowSeparator(.hidden)
+            if activeVoiceID == "search" {
+                InlineVoiceInput(hint: "说出要找的物品", actionTitle: "搜索", onCancel: { activeVoiceID = nil }) {
+                    query = $0.trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+                    activeVoiceID = nil
+                }.listRowSeparator(.hidden)
+            }
             Picker("地点", selection: $place) {
                 Text("所有地点").tag("")
                 ForEach(store.places) { Text($0.name).tag($0.id) }
             }.accessibilityIdentifier("find.place")
             Section {
-                if loading && results.isEmpty { ProgressView("正在查找…") }
+                if loading && visibleResults.isEmpty { ProgressView("正在查找…") }
                 if let error { Text(error).foregroundStyle(.red).font(.footnote) }
-                if !loading && results.isEmpty && error == nil {
+                if !loading && visibleResults.isEmpty && error == nil {
                     ContentUnavailableView(query.isEmpty ? "还没有物品" : "没有找到", systemImage: "magnifyingglass", description: Text(query.isEmpty ? "去扫描页给物品拍张照。" : "试试其他名称，或切换到所有地点。"))
                 }
-                ForEach(results.filter { !store.deletedItemIDs.contains($0.id) }) { item in
-                    NavigationLink(value: item) { ItemRow(item: item) }
-                        .swipeActions(allowsFullSwipe: false) { Button { removalTarget = item } label: { Label("删除", systemImage: "trash") }.tint(.red) }
-                        .contextMenu { Button("删除物品", systemImage: "trash", role: .destructive) { removalTarget = item } }
+                ForEach(visibleResults) { item in
+                    ItemActionsRow(item: item, activeVoiceID: $activeVoiceID, onUpdate: { editedItems[$0.id] = $0 }, onOpen: { selectedItem = $0 }) { removalTarget = item }
                 }
-            } header: { Text(query.isEmpty && place.isEmpty ? "最近看到的物品" : "找到 \(results.count) 类物品") }
-              footer: { Text("点开看照片与地点 · 左滑可删除\(results.count >= 200 ? " · 当前显示最近 200 条，可输入关键词继续查找" : "")") }
+            } header: { Text(query.isEmpty && place.isEmpty ? "最近看到的物品" : "找到 \(visibleResults.count) 类物品") }
+              footer: { Text("点物品看详情 · 麦克风补充说明\(results.count >= 200 ? " · 当前显示最近 200 条，可输入关键词继续查找" : "")") }
         }.listStyle(.plain).navigationTitle("查找")
             .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "名称、颜色、用途，例如白色充电线")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button { voiceSearch = true } label: { Label("语音搜索", systemImage: "mic.fill") }
+                    Button { activeVoiceID = activeVoiceID == "search" ? nil : "search" } label: { Label("语音搜索", systemImage: "mic.fill") }
                         .accessibilityIdentifier("find.voice")
                 }
             }
-            .sheet(isPresented: $voiceSearch) {
-                VoiceInputSheet(title: "语音搜索", hint: "说出要找的物品，例如“小米摄像头”。", actionTitle: "搜索") { query = $0.trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters)) }
-            }
-            .navigationDestination(for: InventoryItem.self) { ItemDetailView(item: $0) }
+            .navigationDestination(item: $selectedItem) { ItemDetailView(item: $0) }
             .alert("删除物品？", isPresented: Binding(get: { removalTarget != nil }, set: { if !$0 { removalTarget = nil } }), presenting: removalTarget) { item in
                 Button("确认删除", role: .destructive) { Task { await store.deleteItem(item) } }
                 Button("保留", role: .cancel) { }
@@ -56,7 +64,9 @@ struct FindView: View {
                 } catch is CancellationError { }
                 catch { if !Task.isCancelled { self.error = "查找暂时失败，请下拉刷新后重试。"; loading = false } }
             }
-            .refreshable { await store.activate() }
+            .onChange(of: query) { _, _ in editedItems = [:] }
+            .onChange(of: place) { _, _ in editedItems = [:] }
+            .refreshable { editedItems = [:]; await store.activate() }
     }
 }
 
@@ -71,8 +81,65 @@ struct ItemRow: View {
                 Text(photoDate(item.last_seen_at)).font(.caption).foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
-            if let quantity = item.quantity { Text("×\(quantity)").font(.caption).foregroundStyle(.secondary) }
         }.padding(.vertical, 8)
+    }
+}
+
+struct ItemDetailTarget: Hashable { let item: InventoryItem; let observationID: String }
+
+struct ItemActionsRow: View {
+    @EnvironmentObject var store: AppStore
+    let item: InventoryItem
+    var observationID: String? = nil
+    var prefix = "find"
+    @Binding var activeVoiceID: String?
+    var deleting = false
+    var onUpdate: (InventoryItem) -> Void = { _ in }
+    let onOpen: (InventoryItem) -> Void
+    let onDelete: () -> Void
+    @State private var refining = false
+    @State private var refinementError: String?
+    @State private var corrected: InventoryItem?
+    private var id: String { observationID ?? item.id }
+    private var current: InventoryItem { corrected ?? item }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 0) {
+                Button { activeVoiceID = nil; onOpen(current) } label: {
+                    ItemRow(item: current).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                }.buttonStyle(.plain).accessibilityIdentifier("\(prefix).open.\(id)")
+                Button {
+                    refinementError = nil
+                    activeVoiceID = activeVoiceID == id ? nil : id
+                } label: {
+                    if refining { ProgressView().frame(width: 44, height: 44) }
+                    else { Image(systemName: activeVoiceID == id ? "waveform" : "mic.fill").frame(width: 44, height: 44) }
+                }.buttonStyle(.borderless).disabled(deleting || refining)
+                    .accessibilityLabel("语音补充\(current.name)").accessibilityIdentifier("\(prefix).voice.\(id)")
+                Button(role: .destructive) { activeVoiceID = nil; onDelete() } label: {
+                    Image(systemName: "trash").foregroundStyle(.red).frame(width: 44, height: 44)
+                }.buttonStyle(.borderless).disabled(deleting || refining)
+                    .accessibilityLabel(observationID == nil ? "删除物品\(current.name)" : "删除识别结果\(current.name)")
+                    .accessibilityIdentifier("\(prefix).delete.\(id)")
+            }
+            if activeVoiceID == id {
+                InlineVoiceInput(hint: "例如：这是小米室外摄像头", actionTitle: "更新", onCancel: { activeVoiceID = nil }) { text in
+                    activeVoiceID = nil; refining = true; refinementError = nil
+                    onUpdate(current)
+                    Task {
+                        defer { refining = false }
+                        do {
+                            let updated = try await store.refine(current, observationID: observationID, instruction: text)
+                            corrected = updated; onUpdate(updated)
+                        }
+                        catch { refinementError = error.localizedDescription }
+                    }
+                }
+            }
+            if refining { Text("正在更新说明…").font(.caption).foregroundStyle(.secondary) }
+            if let refinementError { Text(refinementError).font(.caption).foregroundStyle(.red) }
+        }
+        .onChange(of: item) { _, _ in corrected = nil }
     }
 }
 
@@ -102,17 +169,26 @@ struct ItemDetailView: View {
                 ConnectionNote()
                 RemotePhoto(path: current.crop_url ?? current.photo_preview_url, fallback: current.photo_preview_url, fit: true)
                     .frame(maxWidth: .infinity).frame(height: 290).background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20)).clipShape(RoundedRectangle(cornerRadius: 20))
-                Button { voiceEdit = true } label: {
+                Button { voiceEdit.toggle() } label: {
                     Label(refining ? "正在更新说明…" : "语音补充", systemImage: refining ? "sparkles" : "mic.fill")
                         .frame(maxWidth: .infinity).padding(.vertical, 8)
                 }.buttonStyle(.borderedProminent).disabled(refining || deleting).accessibilityIdentifier("item.voice")
+                if voiceEdit {
+                    InlineVoiceInput(hint: "说出这件物品是什么，或哪里需要改", actionTitle: "更新", onCancel: { voiceEdit = false }) { text in
+                        voiceEdit = false; refining = true; refinementError = nil; didRefine = false
+                        Task {
+                            defer { refining = false }
+                            do { correctedItem = try await store.refine(current, observationID: observationID, instruction: text); didRefine = true }
+                            catch { refinementError = error.localizedDescription }
+                        }
+                    }
+                }
                 if refining { ProgressView("结合照片更新名称和说明…") }
                 if let refinementError { Text(refinementError).font(.footnote).foregroundStyle(.red) }
                 if didRefine && !refining { Label("名称和说明已更新", systemImage: "checkmark.circle").font(.footnote).foregroundStyle(.green) }
                 Text(current.crop_url == nil ? "原照片预览" : "物品裁剪照片").font(.caption).foregroundStyle(.secondary)
                 Label(current.bin_name, systemImage: "mappin.and.ellipse").font(.title3.weight(.semibold))
                 Text("最后看到：\(photoDate(current.last_seen_at))").font(.subheadline).foregroundStyle(.secondary)
-                Text(current.quantity.map { "数量：\($0)" } ?? "数量未知").font(.subheadline)
                 if !current.description.isEmpty { Text(current.description).lineSpacing(5) }
                 if !current.aliases.isEmpty { Text(current.aliases.joined(separator: " · ")).font(.footnote).foregroundStyle(.secondary) }
                 Text("后续照片里没出现，也会保留这里的最后记录。").font(.footnote).foregroundStyle(.secondary)
@@ -122,16 +198,6 @@ struct ItemDetailView: View {
                 }
             }.padding(20)
         }.navigationTitle(current.name).navigationBarTitleDisplayMode(.inline)
-            .sheet(isPresented: $voiceEdit) {
-                VoiceInputSheet(title: "语音补充", hint: "说出这件物品是什么，或哪里需要改。例如“这是小米室外的摄像头”。", actionTitle: "更新说明") { text in
-                    refining = true; refinementError = nil; didRefine = false
-                    Task {
-                        defer { refining = false }
-                        do { correctedItem = try await store.refine(current, observationID: observationID, instruction: text); didRefine = true }
-                        catch { refinementError = error.localizedDescription }
-                    }
-                }
-            }
             .alert(observationID == nil ? "删除物品？" : "删除识别结果？", isPresented: $confirmDeletion) {
                 Button("确认删除", role: .destructive) {
                     deleting = true

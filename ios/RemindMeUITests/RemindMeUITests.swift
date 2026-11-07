@@ -47,24 +47,35 @@ final class RemindMeUITests: XCTestCase {
             let deny = system.alerts.buttons.matching(NSPredicate(format: "label IN %@", ["不允许", "Don't Allow", "Don’t Allow"])).firstMatch
             if deny.exists { deny.tap() }
         }
-        let transcript = app.textViews["voice.transcript"]
+        let transcript = app.descendants(matching: .any).matching(identifier: "voice.transcript").firstMatch
         XCTAssertTrue(transcript.waitForExistence(timeout: 10)); transcript.tap(); transcript.typeText(originalName + "。")
-        let search = XCTAttachment(screenshot: app.screenshot()); search.name = "语音搜索与文字回退"; search.lifetime = .keepAlways; add(search)
+        XCTAssertTrue(app.navigationBars["查找"].exists)
+        let search = XCTAttachment(screenshot: app.screenshot()); search.name = "查找页原地语音搜索"; search.lifetime = .keepAlways; add(search)
         app.buttons["voice.submit"].tap()
-        let result = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", originalName)).firstMatch
-        XCTAssertTrue(result.waitForExistence(timeout: 15)); result.tap()
-        XCTAssertTrue(app.buttons["item.voice"].waitForExistence(timeout: 10)); app.buttons["item.voice"].tap()
+        let existing = try await fixtureAPI("/api/captures/inventory?bin_id=\(fixtureID!)")
+        let id = try XCTUnwrap((existing["items"] as? [[String: Any]])?.first?["id"] as? String)
+        let result = app.buttons["find.open.\(id)"]
+        XCTAssertTrue(result.waitForExistence(timeout: 15))
+        XCTAssertFalse(app.staticTexts["×1"].exists)
+        XCTAssertTrue(app.buttons["find.delete.\(id)"].exists)
+        app.buttons["find.voice.\(id)"].tap()
+        XCTAssertTrue(app.navigationBars["查找"].exists)
         XCTAssertTrue(transcript.waitForExistence(timeout: 10)); transcript.tap()
         transcript.typeText("这是小米室外的摄像头，请把名称改为小米室外摄像头。")
+        let inline = XCTAttachment(screenshot: app.screenshot()); inline.name = "物品行语音与删除并排"; inline.lifetime = .keepAlways; add(inline)
         app.buttons["voice.submit"].tap()
-        XCTAssertTrue(app.staticTexts["名称和说明已更新"].waitForExistence(timeout: 90))
-        XCTAssertTrue(app.navigationBars["小米室外摄像头"].exists)
+        XCTAssertTrue(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "小米室外摄像头"), object: result)], timeout: 90) == .completed)
+        XCTAssertTrue(app.navigationBars["查找"].exists)
+        XCTAssertFalse(transcript.exists)
         let updated = try await fixtureAPI("/api/captures/inventory?bin_id=\(fixtureID!)")
         let items = try XCTUnwrap(updated["items"] as? [[String: Any]])
         XCTAssertEqual(items.count, 1); XCTAssertEqual(items.first?["name"] as? String, "小米室外摄像头")
         XCTAssertEqual(items.first?["bin_id"] as? String, fixtureID)
-        let detail = XCTAttachment(screenshot: app.screenshot()); detail.name = "语音补充后名称说明已更新"; detail.lifetime = .keepAlways; add(detail)
+        let after = XCTAttachment(screenshot: app.screenshot()); after.name = "语音更新后留在查找页"; after.lifetime = .keepAlways; add(after)
+        result.tap()
+        XCTAssertTrue(app.navigationBars["小米室外摄像头"].waitForExistence(timeout: 10))
     }
+
     @MainActor func testDeleteWholeScanDirectlyFromScanPage() async throws {
         guard ProcessInfo.processInfo.environment["REMINDME_RUN_UI_TESTS"] == "1" else { throw XCTSkip("Use ios/scripts/test-local.py with the local test server") }
         let profile = try await fixtureAPI("/api/auth/me")
@@ -131,6 +142,20 @@ final class RemindMeUITests: XCTestCase {
         XCTAssertTrue(scan.waitForExistence(timeout: 20)); scan.tap()
         let wrong = app.buttons["result.delete.\(wrongID)"]
         XCTAssertTrue(wrong.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts["×1"].exists)
+        app.buttons["result.voice.\(wrongID)"].tap()
+        let system = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        if system.alerts.firstMatch.waitForExistence(timeout: 4) {
+            let deny = system.alerts.buttons.matching(NSPredicate(format: "label IN %@", ["不允许", "Don't Allow", "Don’t Allow"])).firstMatch
+            if deny.exists { deny.tap() }
+        }
+        XCTAssertTrue(app.navigationBars["识别结果"].exists)
+        let transcript = app.descendants(matching: .any).matching(identifier: "voice.transcript").firstMatch
+        XCTAssertTrue(transcript.waitForExistence(timeout: 10))
+        let voice = XCTAttachment(screenshot: app.screenshot()); voice.name = "识别结果原地语音补充"; voice.lifetime = .keepAlways; add(voice)
+        app.buttons["voice.cancel"].tap()
+        XCTAssertFalse(transcript.exists)
+        XCTAssertTrue(app.buttons["result.open.\(wrongID)"].exists)
         wrong.tap(); XCTAssertTrue(app.alerts.buttons["确认删除"].waitForExistence(timeout: 5))
         app.alerts.buttons["保留"].tap(); XCTAssertTrue(wrong.exists)
         let before = XCTAttachment(screenshot: app.screenshot()); before.name = "识别结果单项删除"; before.lifetime = .keepAlways; add(before)
@@ -180,8 +205,7 @@ final class RemindMeUITests: XCTestCase {
         app.searchFields.firstMatch.tap(); app.searchFields.firstMatch.typeText(itemName)
         let result = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", itemName)).firstMatch
         XCTAssertTrue(result.waitForExistence(timeout: 15))
-        result.swipeLeft()
-        app.buttons["删除"].tap()
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "find.delete.")).firstMatch.tap()
         XCTAssertTrue(app.buttons["确认删除"].waitForExistence(timeout: 5))
         app.buttons["保留"].tap()
         XCTAssertTrue(result.exists)

@@ -101,6 +101,8 @@ struct PhotoDetailView: View {
     @State private var error: String?
     private var current: HistoryPhoto { store.history.first { $0.id == photo.id } ?? photo }
     @State private var removalTarget: Observation?
+    @State private var activeVoiceID: String?
+    @State private var selectedResult: ItemDetailTarget?
     private var photos: [HistoryPhoto] {
         let entries = wholeScan ? store.history.filter { $0.capture_id == photo.capture_id } : [current]
         return entries.isEmpty ? [photo] : entries
@@ -116,11 +118,8 @@ struct PhotoDetailView: View {
                 Section("识别出 \(entry.items.count) 类物品") {
                     ForEach(entry.items) { item in
                         let inventory = InventoryItem(id: item.item_id ?? item.id, name: item.name, description: item.description, aliases: item.aliases, quantity: item.quantity, bin_id: entry.bin_id, bin_name: entry.bin_name, last_seen_at: entry.captured_at, crop_url: item.crop_url, photo_preview_url: entry.preview_url)
-                        HStack(spacing: 12) {
-                            NavigationLink { ItemDetailView(item: inventory, observationID: item.id) } label: { ItemRow(item: inventory) }.accessibilityIdentifier("result.open.\(item.id)")
-                            Button(role: .destructive) { removalTarget = item; confirm = true } label: {
-                                Label("删除", systemImage: "trash").labelStyle(.iconOnly).font(.body).foregroundStyle(.red).frame(width: 44, height: 44)
-                            }.buttonStyle(.borderless).disabled(deleting).accessibilityLabel("删除识别结果\(item.name)").accessibilityIdentifier("result.delete.\(item.id)")
+                        ItemActionsRow(item: inventory, observationID: item.id, prefix: "result", activeVoiceID: $activeVoiceID, deleting: deleting, onOpen: { selectedResult = ItemDetailTarget(item: $0, observationID: item.id) }) {
+                            removalTarget = item; confirm = true
                         }
                     }
                     if entry.items.isEmpty { Text(["queued", "processing", "uploading"].contains(entry.state) ? "处理完成后会自动显示结果。" : "这张照片没有识别结果，可以重新拍摄。").font(.subheadline).foregroundStyle(.secondary) }
@@ -129,6 +128,7 @@ struct PhotoDetailView: View {
             if let error { Text(error).foregroundStyle(.red) }
             Button(wholeScan ? "删除整次扫描" : "删除这张照片记录", role: .destructive) { removalTarget = nil; confirm = true }.disabled(deleting)
         }.listStyle(.plain).navigationTitle("识别结果").navigationBarTitleDisplayMode(.inline)
+            .navigationDestination(item: $selectedResult) { ItemDetailView(item: $0.item, observationID: $0.observationID) }
             .alert(removalTarget != nil ? "删除识别结果？" : wholeScan ? "删除整次扫描？" : "删除照片记录？", isPresented: $confirm) {
                 Button("确认删除", role: .destructive) {
                     deleting = true
