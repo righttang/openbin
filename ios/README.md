@@ -63,7 +63,7 @@ xcrun devicectl device install app --device YOUR_DEVICE \
   ios/build-device/Build/Products/Release-iphoneos/RemindMe.app
 ```
 
-新增 Swift 文件后可运行 `ruby ios/generate-project.rb`（需要 `xcodeproj` Ruby gem；打开工程不需要）。图标生成器在 `ios/scripts/generate-icon.swift`。
+新增 Swift 文件后可运行 `ruby ios/generate-project.rb`（需要 `xcodeproj` Ruby gem；打开工程不需要）。App 图标保存在 `ios/RemindMe/Assets.xcassets/AppIcon.appiconset/AppIcon.png`，使用 1024 × 1024 的不透明方形 PNG，由 iOS 自动处理桌面圆角。
 
 ## 测试
 
