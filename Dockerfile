@@ -41,6 +41,7 @@ WORKDIR /app
 ENV NODE_ENV=production \
     SELF_HOSTED=true \
     PORT=1453 \
+    XDG_CACHE_HOME=/tmp \
     DATABASE_PATH=/data/remindme.db \
     PHOTO_STORAGE_PATH=/data/photos \
     CAPTURE_SCRATCH_PATH=/scratch
