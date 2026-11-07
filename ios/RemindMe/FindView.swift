@@ -162,12 +162,11 @@ struct ItemDetailView: View {
     var observationID: String? = nil
     @State private var deleting = false
     @State private var confirmDeletion = false
-    @State private var voiceEdit = false
+    @State private var activeVoiceID: String?
     @State private var refining = false
     @State private var refinementError: String?
     @State private var correctedItem: InventoryItem?
     @State private var didRefine = false
-    @State private var placeVoiceID: String?
     private var current: InventoryItem {
         if let correctedItem { return correctedItem }
         if let observationID, let record = store.history.flatMap(\.items).first(where: { $0.id == observationID }) {
@@ -181,13 +180,13 @@ struct ItemDetailView: View {
                 ConnectionNote()
                 RemotePhoto(path: current.crop_url ?? current.photo_preview_url, fallback: current.photo_preview_url, fit: true)
                     .frame(maxWidth: .infinity).frame(height: 290).background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20)).clipShape(RoundedRectangle(cornerRadius: 20))
-                Button { voiceEdit.toggle() } label: {
+                Button { activeVoiceID = activeVoiceID == "item" ? nil : "item" } label: {
                     Label(refining ? "正在更新说明…" : "语音补充", systemImage: refining ? "sparkles" : "mic.fill")
                         .frame(maxWidth: .infinity).padding(.vertical, 8)
                 }.buttonStyle(.borderedProminent).disabled(refining || deleting).accessibilityIdentifier("item.voice")
-                if voiceEdit {
-                    InlineVoiceInput(hint: "说出这件物品是什么，或哪里需要改", actionTitle: "更新", onCancel: { voiceEdit = false }) { text in
-                        voiceEdit = false; refining = true; refinementError = nil; didRefine = false
+                if activeVoiceID == "item" {
+                    InlineVoiceInput(hint: "说出这件物品是什么，或哪里需要改", actionTitle: "更新", onCancel: { activeVoiceID = nil }) { text in
+                        activeVoiceID = nil; refining = true; refinementError = nil; didRefine = false
                         Task {
                             defer { refining = false }
                             do { correctedItem = try await store.refine(current, observationID: observationID, instruction: text); didRefine = true }
@@ -199,7 +198,7 @@ struct ItemDetailView: View {
                 if let refinementError { Text(refinementError).font(.footnote).foregroundStyle(.red) }
                 if didRefine && !refining { Label("名称和说明已更新", systemImage: "checkmark.circle").font(.footnote).foregroundStyle(.green) }
                 Text(current.crop_url == nil ? "原照片预览" : "物品裁剪照片").font(.caption).foregroundStyle(.secondary)
-                PlaceDescriptionView(place: Place(id: current.bin_id, name: current.bin_name), activeVoiceID: $placeVoiceID, prefix: "item.place")
+                PlaceDescriptionView(place: Place(id: current.bin_id, name: current.bin_name), activeVoiceID: $activeVoiceID, prefix: "item.place")
                 Text("最后看到：\(photoDate(current.last_seen_at))").font(.subheadline).foregroundStyle(.secondary)
                 if !current.description.isEmpty { Text(current.description).lineSpacing(5) }
                 if !current.aliases.isEmpty { Text(current.aliases.joined(separator: " · ")).font(.footnote).foregroundStyle(.secondary) }
