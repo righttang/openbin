@@ -35,16 +35,17 @@ actor APIClient: CaptureTransport {
         let config = URLSessionConfiguration.ephemeral
         config.httpShouldSetCookies = false
         config.timeoutIntervalForRequest = 30
-        config.timeoutIntervalForResource = 120
+        config.timeoutIntervalForResource = 180
         self.session = session ?? URLSession(configuration: config)
     }
 
     func url(_ path: String) -> URL { URL(string: path, relativeTo: baseURL)!.absoluteURL }
 
     private func raw(_ path: String, method: String = "GET", body: Data? = nil,
-                     headers: [String: String] = [:], protected: Bool = true) async throws -> Data {
+                     headers: [String: String] = [:], protected: Bool = true, timeout: TimeInterval = 30) async throws -> Data {
         if method != "GET", csrf == nil, protected { let _: LocalProfile = try await profile() }
         var request = URLRequest(url: url(path))
+        request.timeoutInterval = timeout
         request.httpMethod = method
         request.httpBody = body
         if let csrf {
@@ -87,6 +88,12 @@ actor APIClient: CaptureTransport {
         parts.queryItems = [URLQueryItem(name: "q", value: query), URLQueryItem(name: "bin_id", value: placeID.isEmpty ? nil : placeID)].filter { $0.value != nil }
         let result: Inventory = try await get("/api/captures/inventory?\(parts.percentEncodedQuery ?? "")")
         return result.items
+    }
+    func refine(itemID: String, observationID: String?, instruction: String) async throws -> ItemRefinement {
+        let path = observationID.map { "/api/captures/observations/\($0)/refine" } ?? "/api/captures/items/\(itemID)/refine"
+        let data = try await raw(path, method: "POST", body: JSONSerialization.data(withJSONObject: ["instruction": instruction]),
+                                 headers: ["Content-Type": "application/json"], timeout: 150)
+        return try JSONDecoder().decode(ItemRefinement.self, from: data)
     }
     func history() async throws -> [HistoryPhoto] { let value: HistoryList = try await get("/api/captures/history"); return value.photos }
     func create(_ draft: PhotoDraft) async throws -> Capture {

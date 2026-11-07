@@ -97,3 +97,18 @@ func photoDate(_ raw: String?) -> String {
     let date = parser.date(from: normalized) ?? ISO8601DateFormatter().date(from: normalized)
     return date?.formatted(.dateTime.month().day().hour().minute().locale(Locale(identifier: "zh_CN"))) ?? raw
 }
+
+struct ItemRefinement: Decodable {
+    let name: String
+    let description: String
+    let aliases: [String]
+    let item_id: String?
+    let observation_id: String?
+}
+extension InventoryItem {
+    func corrected(name: String, description: String, aliases: [String]) -> InventoryItem {
+        InventoryItem(id: id, name: name, description: description, aliases: aliases, quantity: quantity,
+                      bin_id: bin_id, bin_name: bin_name, last_seen_at: last_seen_at,
+                      crop_url: crop_url, photo_preview_url: photo_preview_url)
+    }
+}

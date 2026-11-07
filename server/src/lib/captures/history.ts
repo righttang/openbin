@@ -15,7 +15,7 @@ interface HistoryPhotoRow {
 
 interface ObservationRow {
   id: string; item_id: string | null; name: string; description: string; aliases_json: string;
-  quantity: number | null; capture_id: string; created_at: string;
+  quantity: number | null; capture_id: string; created_at: string; updated_at?: string | null;
 }
 
 interface InventoryRow {
@@ -186,7 +186,7 @@ async function restoreFromObservation(itemId: string, observation: ObservationRo
     normalizeItemName(observation.name),
     observation.capture_id,
     observation.captured_at,
-    observation.created_at,
+    observation.updated_at ?? observation.created_at,
     itemId,
   ]);
 }
@@ -293,7 +293,7 @@ async function retractDismissedItems(affected: { item_id: string }[], binId: str
     // A late older photo can have a newer processing timestamp than a manual
     // edit. Preserve explicit manual provenance when its evidence pointer moves.
     const manuallyEdited = !currentObservation || !sameCaptureContent(item, currentObservation)
-      || captureTimestampMs(item.updated_at) > captureTimestampMs(currentObservation.created_at)
+      || captureTimestampMs(item.updated_at) > captureTimestampMs(currentObservation.updated_at ?? currentObservation.created_at)
       || keepsManualBaseline;
     if (manuallyEdited) {
       if (!keepsManualBaseline) await saveManualCaptureBaseline(itemId, { ...item }, execute);
@@ -301,7 +301,7 @@ async function retractDismissedItems(affected: { item_id: string }[], binId: str
       await refreshItemEvidence(itemId, surviving, execute);
       continue;
     }
-    if (surviving && baseline && baselineUpdatedAt > captureTimestampMs(surviving.created_at)
+    if (surviving && baseline && baselineUpdatedAt > captureTimestampMs(surviving.updated_at ?? surviving.created_at)
       && await restoreBaseline(itemId, baseline.snapshot_json, execute)) await refreshItemEvidence(itemId, surviving, execute);
     else if (surviving) await restoreFromObservation(itemId, surviving, execute);
     else if (item.capture_created) {

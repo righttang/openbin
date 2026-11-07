@@ -119,9 +119,9 @@ export async function commitRecognition(
           const original = (await execute(`SELECT name,quantity,normalized_name,aliases_json,description,
             last_seen_batch_id,last_seen_at,observation_state,updated_at,capture_created FROM bin_items
             WHERE id=$1`, [old.id])).rows[0] as { name: string; description: string; quantity: number | null; aliases_json: string; updated_at: string; last_seen_batch_id: string | null; capture_created: number };
-          const prior = (await execute(`SELECT name,description,quantity,aliases_json,created_at FROM observations WHERE item_id=$1 AND capture_id=$2
-            ORDER BY created_at DESC LIMIT 1`, [old.id, original.last_seen_batch_id])).rows[0] as { name: string; description: string; quantity: number | null; aliases_json: string; created_at: string } | undefined;
-          const manuallyEdited = !prior || !sameCaptureContent(original, prior) || captureTimestampMs(original.updated_at) > captureTimestampMs(prior.created_at);
+          const prior = (await execute(`SELECT name,description,quantity,aliases_json,created_at,updated_at FROM observations WHERE item_id=$1 AND capture_id=$2
+            ORDER BY created_at DESC LIMIT 1`, [old.id, original.last_seen_batch_id])).rows[0] as { name: string; description: string; quantity: number | null; aliases_json: string; created_at: string; updated_at: string | null } | undefined;
+          const manuallyEdited = !prior || !sameCaptureContent(original, prior) || captureTimestampMs(original.updated_at) > captureTimestampMs(prior.updated_at ?? prior.created_at);
           if (!original.capture_created || manuallyEdited) {
             if (manuallyEdited) {
               await saveManualCaptureBaseline(old.id, { ...original }, execute);

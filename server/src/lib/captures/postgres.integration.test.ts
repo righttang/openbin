@@ -87,6 +87,27 @@ async function inventory() {
 }
 
 describe('PostgreSQL capture pipeline', () => {
+  it('refines an item from its stored crop, updates history and preserves quantity and location', async () => {
+    const batch = await queued();
+    await processNextCapture({ recognize: async () => recognized(batch.photoId, null, 2) });
+    const original = (await inventory())[0];
+    const expected = { name: '小米室外摄像头', description: '用于室外监控的白色摄像头。', aliases: ['小米监控'] };
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(expected) } }] })));
+    vi.stubEnv('AI_ENDPOINT_URL', 'https://gateway.test/v1'); vi.stubEnv('AI_MODEL', 'vision'); vi.stubEnv('AI_API_KEY', 'test');
+    vi.stubGlobal('fetch', fetcher);
+    try {
+      const response = await request(app).post(`/api/captures/items/${original.id}/refine`).set('Authorization', `Bearer ${token}`).send({ instruction: '这是小米室外的摄像头' });
+      expect(response.status).toBe(200); expect(response.body).toMatchObject(expected);
+      expect((await inventory())[0]).toMatchObject({ id: original.id, name: expected.name, quantity: 2, last_seen_batch_id: batch.id });
+      const history = await request(app).get('/api/captures/history').set('Authorization', `Bearer ${token}`);
+      expect(history.body.photos[0].items[0]).toMatchObject(expected);
+      const body = JSON.parse(fetcher.mock.calls[0][1].body);
+      const jpeg = Buffer.from(body.messages[1].content[1].image_url.url.split(',')[1], 'base64');
+      expect((await sharp(jpeg).metadata()).format).toBe('jpeg');
+      expect((await remove(batch)).body.removed_items).toBe(1);
+      expect(await inventory()).toEqual([]);
+    } finally { vi.unstubAllGlobals(); vi.unstubAllEnvs(); }
+  });
   it('commits a corrected photo preview and crop in the original recognition transaction', async () => {
     const batch = await queued();
     const before = await request(app).get('/api/captures/history').set('Authorization', `Bearer ${token}`);

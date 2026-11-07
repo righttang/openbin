@@ -27,6 +27,44 @@ final class RemindMeUITests: XCTestCase {
         }
         if let id = fixtureID { _ = try await fixtureAPI("/api/bins/\(id)", method: "DELETE") }
     }
+    @MainActor func testVoiceSearchAndItemSupplement() async throws {
+        guard ProcessInfo.processInfo.environment["REMINDME_RUN_UI_TESTS"] == "1" else { throw XCTSkip("Use ios/scripts/test-local.py with the local test server") }
+        let profile = try await fixtureAPI("/api/auth/me")
+        guard profile["id"] as? String == ProcessInfo.processInfo.environment["REMINDME_EXPECT_TEST_PROFILE"] else { XCTFail("Wrong test profile"); return }
+        let originalName = "语音验收摄像头" + UUID().uuidString.prefix(6)
+        let fixture = try await fixtureAPI("/api/bins", method: "POST", body: ["name": "语音功能验收", "locationId": profile["activeLocationId"]!, "items": [originalName]])
+        fixtureID = try XCTUnwrap(fixture["id"] as? String)
+        let app = XCUIApplication()
+        app.launchEnvironment["REMINDME_TEST_URL"] = "http://127.0.0.1:1453"
+        app.launchArguments += ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
+        app.launch()
+        XCTAssertTrue(app.tabBars.buttons["查找"].waitForExistence(timeout: 20)); app.tabBars.buttons["查找"].tap()
+        XCTAssertTrue(app.buttons["find.voice"].waitForExistence(timeout: 10)); app.buttons["find.voice"].tap()
+        // Simulator microphones cannot reproduce speech reliably. Exercise the same
+        // transcript field, including the permission-denied fallback, with real APIs.
+        let system = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        if system.alerts.firstMatch.waitForExistence(timeout: 4) {
+            let deny = system.alerts.buttons.matching(NSPredicate(format: "label IN %@", ["不允许", "Don't Allow", "Don’t Allow"])).firstMatch
+            if deny.exists { deny.tap() }
+        }
+        let transcript = app.textViews["voice.transcript"]
+        XCTAssertTrue(transcript.waitForExistence(timeout: 10)); transcript.tap(); transcript.typeText(originalName + "。")
+        let search = XCTAttachment(screenshot: app.screenshot()); search.name = "语音搜索与文字回退"; search.lifetime = .keepAlways; add(search)
+        app.buttons["voice.submit"].tap()
+        let result = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", originalName)).firstMatch
+        XCTAssertTrue(result.waitForExistence(timeout: 15)); result.tap()
+        XCTAssertTrue(app.buttons["item.voice"].waitForExistence(timeout: 10)); app.buttons["item.voice"].tap()
+        XCTAssertTrue(transcript.waitForExistence(timeout: 10)); transcript.tap()
+        transcript.typeText("这是小米室外的摄像头，请把名称改为小米室外摄像头。")
+        app.buttons["voice.submit"].tap()
+        XCTAssertTrue(app.staticTexts["名称和说明已更新"].waitForExistence(timeout: 90))
+        XCTAssertTrue(app.navigationBars["小米室外摄像头"].exists)
+        let updated = try await fixtureAPI("/api/captures/inventory?bin_id=\(fixtureID!)")
+        let items = try XCTUnwrap(updated["items"] as? [[String: Any]])
+        XCTAssertEqual(items.count, 1); XCTAssertEqual(items.first?["name"] as? String, "小米室外摄像头")
+        XCTAssertEqual(items.first?["bin_id"] as? String, fixtureID)
+        let detail = XCTAttachment(screenshot: app.screenshot()); detail.name = "语音补充后名称说明已更新"; detail.lifetime = .keepAlways; add(detail)
+    }
     @MainActor func testDeleteWholeScanDirectlyFromScanPage() async throws {
         guard ProcessInfo.processInfo.environment["REMINDME_RUN_UI_TESTS"] == "1" else { throw XCTSkip("Use ios/scripts/test-local.py with the local test server") }
         let profile = try await fixtureAPI("/api/auth/me")

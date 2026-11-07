@@ -13,6 +13,7 @@
 		1D7AFD9446F963E800837939 /* CameraView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4F79E4694EA4C37F41A7C5D /* CameraView.swift */; };
 		1D7B6E4BC78B0403DFC86E10 /* ScanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80731EADF96283593652AFA3 /* ScanView.swift */; };
 		2C0577243552358F0739F001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 05E75C70E07F7C80AD9BC53F /* Assets.xcassets */; };
+		3CC394DD1F043421A2F65C6D /* SpeechInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55A7CD1BBC5AE4FD13557365 /* SpeechInput.swift */; };
 		3DAD88C5E4AE36661C65C337 /* RemindMeUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D7D0CAA26F57630CE44A505 /* RemindMeUITests.swift */; };
 		477B867F6DFA9DBBF7A774C5 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5F521DADE8CFF0CD5A2C2165 /* Foundation.framework */; };
 		5F38A3D791B74F306BAADBCD /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5F521DADE8CFF0CD5A2C2165 /* Foundation.framework */; };
@@ -49,6 +50,7 @@
 		1C0769E7B1F0FC6EF228B401 /* RemindMe.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = RemindMe.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		22DA3B565AE66160D86F14FC /* CaptureQueueTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptureQueueTests.swift; sourceTree = "<group>"; };
 		3C460864EBE64FC2D880042D /* RemindMeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RemindMeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		55A7CD1BBC5AE4FD13557365 /* SpeechInput.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SpeechInput.swift; sourceTree = "<group>"; };
 		5F521DADE8CFF0CD5A2C2165 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		7D7D0CAA26F57630CE44A505 /* RemindMeUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RemindMeUITests.swift; sourceTree = "<group>"; };
 		80731EADF96283593652AFA3 /* ScanView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ScanView.swift; sourceTree = "<group>"; };
@@ -113,6 +115,7 @@
 				CA4DE1953A9CF3179B9039A7 /* RemindMeApp.swift */,
 				80731EADF96283593652AFA3 /* ScanView.swift */,
 				05E75C70E07F7C80AD9BC53F /* Assets.xcassets */,
+				55A7CD1BBC5AE4FD13557365 /* SpeechInput.swift */,
 			);
 			name = RemindMe;
 			path = RemindMe;
@@ -307,6 +310,7 @@
 				09744F3FE1BDF7F9788357BA /* Models.swift in Sources */,
 				A4D44040B5758FB7022C7E9C /* RemindMeApp.swift in Sources */,
 				1D7B6E4BC78B0403DFC86E10 /* ScanView.swift in Sources */,
+				3CC394DD1F043421A2F65C6D /* SpeechInput.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -396,12 +400,12 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 9;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = RemindMe/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
-				MARKETING_VERSION = 1.0.7;
+				MARKETING_VERSION = 1.0.8;
 				PRODUCT_BUNDLE_IDENTIFIER = com.righttang.remindme;
 				SDKROOT = iphoneos;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -418,12 +422,12 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 9;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = RemindMe/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
-				MARKETING_VERSION = 1.0.7;
+				MARKETING_VERSION = 1.0.8;
 				PRODUCT_BUNDLE_IDENTIFIER = com.righttang.remindme;
 				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
@@ -438,10 +442,10 @@
 			buildSettings = {
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 9;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 1.0.7;
+				MARKETING_VERSION = 1.0.8;
 				PRODUCT_BUNDLE_IDENTIFIER = com.righttang.remindme.remindmeuitests;
 				SDKROOT = iphoneos;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -512,10 +516,10 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 9;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 1.0.7;
+				MARKETING_VERSION = 1.0.8;
 				PRODUCT_BUNDLE_IDENTIFIER = com.righttang.remindme.remindmetests;
 				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
@@ -531,10 +535,10 @@
 			buildSettings = {
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 9;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 1.0.7;
+				MARKETING_VERSION = 1.0.8;
 				PRODUCT_BUNDLE_IDENTIFIER = com.righttang.remindme.remindmeuitests;
 				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
@@ -551,10 +555,10 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 9;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 1.0.7;
+				MARKETING_VERSION = 1.0.8;
 				PRODUCT_BUNDLE_IDENTIFIER = com.righttang.remindme.remindmetests;
 				SDKROOT = iphoneos;
 				SWIFT_EMIT_LOC_STRINGS = YES;

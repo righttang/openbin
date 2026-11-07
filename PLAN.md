@@ -281,3 +281,11 @@ Camera-side event debouncing, local retry buffers, and device sequencing belong 
 - [LiteLLM vision input](https://docs.litellm.ai/docs/completion/vision)
 - [LiteLLM structured output](https://docs.litellm.ai/docs/completion/json_mode)
 - [Safari camera capture requirements](https://webkit.org/blog/7763/a-closer-look-into-webrtc/)
+
+
+### 语音输入（iOS 1.0.8）
+
+- 查找页麦克风：Apple Speech 中文转文字后直接搜索，保留文字校正和键盘输入。
+- 物品详情「语音补充」：将裁剪图（缺失时原预览）、当前名称/说明与转写文字一起提交现有 LiteLLM 视觉模型，一次更新名称、说明、别名；数量、地点、最后拍摄时间不变。
+- 搜索与识别结果使用同一个物品身份；已有结果同步修正。失败保留原值，更新过程中删除的记录不恢复。
+- 首次申请系统麦克风与语音识别权限，支持时本机识别；不持久化音频，不向 LiteLLM 上传音频。

@@ -128,6 +128,23 @@ struct UndoRecord: Identifiable {
         }
         return try await api.inventory(query: query, placeID: place).filter { !deletedItemIDs.contains($0.id) }
     }
+    func refine(_ item: InventoryItem, observationID: String?, instruction: String) async throws -> InventoryItem {
+        let result = try await api.refine(itemID: item.id, observationID: observationID, instruction: instruction)
+        let updated = item.corrected(name: result.name, description: result.description, aliases: result.aliases)
+        if let id = result.item_id, let index = items.firstIndex(where: { $0.id == id }) {
+            items[index] = items[index].corrected(name: result.name, description: result.description, aliases: result.aliases)
+        }
+        for index in history.indices {
+            for entry in history[index].items.indices where history[index].items[entry].id == result.observation_id {
+                let previous = history[index].items[entry]
+                history[index].items[entry] = Observation(observation_id: previous.id, item_id: previous.item_id,
+                    name: result.name, description: result.description, aliases: result.aliases, quantity: previous.quantity, crop_url: previous.crop_url)
+            }
+        }
+        revision += 1; saveCache()
+        await refresh()
+        return updated
+    }
     func deleteItem(_ item: InventoryItem) async {
         do {
             try await api.mutate("/api/items/bulk-delete", body: ["ids": [item.id]])

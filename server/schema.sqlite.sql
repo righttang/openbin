@@ -619,6 +619,7 @@ CREATE TABLE IF NOT EXISTS observations (
   aliases_json TEXT NOT NULL DEFAULT '[]',
   photo_ids_json TEXT NOT NULL DEFAULT '[]',
   dismissed_at TEXT,
+  updated_at TEXT,
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_observations_capture ON observations(capture_id);

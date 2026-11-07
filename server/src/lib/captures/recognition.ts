@@ -202,36 +202,24 @@ async function readBoundedJson(response: Response): Promise<unknown> {
   }
 }
 
-/** Exactly one request includes all photos; failures never fall back to truncated input. */
-export const recognizeCapture: Recognizer = async (input) => {
+/** Shared gateway transport for capture recognition and a user's item correction. */
+export async function requestCaptureModel(
+  system: string, content: Array<Record<string, unknown>>, maxTokens = 12_000, externalSignal?: AbortSignal,
+): Promise<unknown> {
   const endpoint = process.env.AI_ENDPOINT_URL?.replace(/\/+$/, '');
   const model = process.env.AI_MODEL;
   const key = process.env.AI_API_KEY;
   if (!endpoint || !model || !key) throw new CaptureProcessingError('model_not_configured', false);
   const timeout = AbortSignal.timeout(getCaptureModelTimeout());
-  const signal = input.signal ? AbortSignal.any([input.signal, timeout]) : timeout;
+  const signal = externalSignal ? AbortSignal.any([externalSignal, timeout]) : timeout;
   try {
-    const content: Array<Record<string, unknown>> = [{
-      type: 'text',
-      text: JSON.stringify({ location: input.binName, existing_items: input.existingItems }),
-    }];
-    for (const photo of input.photos) {
-      content.push({ type: 'text', text: `Photo ID: ${photo.id}` });
-      content.push({ type: 'image_url', image_url: { url: await readImage(photo, signal) } });
-    }
     const response = await fetch(`${endpoint}/chat/completions`, {
-      method: 'POST',
-      signal,
+      method: 'POST', signal,
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}`, 'Cache-Control': 'no-cache, no-store' },
       body: JSON.stringify({
-        model,
-        messages: [{ role: 'system', content: SYSTEM_PROMPT }, { role: 'user', content }],
-        response_format: { type: 'json_object' },
-        max_tokens: 12_000,
-        stream: false,
-        'no-log': true,
-        store: false,
-        cache: { 'no-cache': true, 'no-store': true },
+        model, messages: [{ role: 'system', content: system }, { role: 'user', content }],
+        response_format: { type: 'json_object' }, max_tokens: maxTokens, stream: false,
+        'no-log': true, store: false, cache: { 'no-cache': true, 'no-store': true },
       }),
     });
     if (!response.ok) {
@@ -244,13 +232,23 @@ export const recognizeCapture: Recognizer = async (input) => {
     if (choice?.finish_reason !== 'stop' || typeof choice.message?.content !== 'string') {
       throw new CaptureProcessingError('invalid_response');
     }
-    let output: unknown;
-    try { output = JSON.parse(choice.message.content); } catch { throw new CaptureProcessingError('invalid_response'); }
-    return validateRecognition(output, input);
+    try { return JSON.parse(choice.message.content); } catch { throw new CaptureProcessingError('invalid_response'); }
   } catch (error) {
-    if (input.signal?.aborted) throw new CaptureProcessingError('worker_interrupted');
+    if (externalSignal?.aborted) throw new CaptureProcessingError('worker_interrupted');
     if (timeout.aborted) throw new CaptureProcessingError('model_timeout');
     if (error instanceof CaptureProcessingError) throw error;
     throw new CaptureProcessingError('model_unavailable');
   }
+}
+
+/** Exactly one request includes all photos; failures never fall back to truncated input. */
+export const recognizeCapture: Recognizer = async (input) => {
+  const content: Array<Record<string, unknown>> = [{
+    type: 'text', text: JSON.stringify({ location: input.binName, existing_items: input.existingItems }),
+  }];
+  for (const photo of input.photos) {
+    content.push({ type: 'text', text: `Photo ID: ${photo.id}` });
+    content.push({ type: 'image_url', image_url: { url: await readImage(photo, input.signal) } });
+  }
+  return validateRecognition(await requestCaptureModel(SYSTEM_PROMPT, content, 12_000, input.signal), input);
 };

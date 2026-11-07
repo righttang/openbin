@@ -8,6 +8,8 @@
   <key>UILaunchScreen</key><dict/>
   <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string></array>
   <key>NSCameraUsageDescription</key><string>给物品拍照，记住它们放在哪里。照片会发送到你的家庭服务器识别。</string>
+  <key>NSMicrophoneUsageDescription</key><string>用语音搜索物品，或补充物品的名称和说明。</string>
+  <key>NSSpeechRecognitionUsageDescription</key><string>把你说的话转成搜索词或物品说明；语音识别可能由 Apple 处理，物品补充文字会发送到家庭服务器。</string>
   <key>NSLocalNetworkUsageDescription</key><string>连接家庭网络中的 RemindMe 服务器，同步照片、物品和地点，无需登录。</string>
   <key>NSAppTransportSecurity</key><dict>
     <key>NSAllowsLocalNetworking</key><true/>
